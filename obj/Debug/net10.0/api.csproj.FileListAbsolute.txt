@@ -71,3 +71,4 @@ C:\gadgetSystem\api\bin\Debug\net10.0\Swashbuckle.AspNetCore.Swagger.dll
 C:\gadgetSystem\api\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
 C:\gadgetSystem\api\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
 C:\gadgetSystem\api\bin\Debug\net10.0\System.IdentityModel.Tokens.Jwt.dll
+C:\gadgetSystem\api\obj\Debug\net10.0\api.sourcelink.json

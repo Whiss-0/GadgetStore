@@ -49,13 +49,6 @@ namespace api.DTOs
                     continue;
                 }
 
-                if (propertyName.Equals("role_id", comparison) ||
-                    propertyName.Equals("roleId", comparison) ||
-                    propertyName.Equals("userRoleId", comparison))
-                {
-                    dto.RoleId = ReadInt32(ref reader, options);
-                    continue;
-                }
 
                 if (propertyName.Equals("office_id", comparison) ||
                     propertyName.Equals("officeId", comparison))
@@ -82,7 +75,6 @@ namespace api.DTOs
             writer.WriteStartObject();
             writer.WriteString("username", value.Username);
             writer.WriteString("password", value.Password);
-            writer.WriteNumber("role_id", value.RoleId);
 
             if (value.OfficeId.HasValue)
             {

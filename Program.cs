@@ -10,6 +10,7 @@ using api.OrderModule;
 using api.OrderDetailModule;
 using api.ReviewModule;
 using api.WishlistModule;
+using api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Any;
@@ -119,6 +120,9 @@ builder.Services.AddScoped<IWishlistRepository, WishlistRepository>();
 
 // Register JWT Token Service
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+
+// Register Email Service
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 var configuredCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
     .Where(origin => !string.IsNullOrWhiteSpace(origin))

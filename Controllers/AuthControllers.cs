@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using api.DTOs;
 using api.Security;
 using api.UserModule;
+using api.Services;
 
 namespace api.Controllers
 {
@@ -10,13 +11,26 @@ namespace api.Controllers
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
+        private const int DefaultUserRoleId = 3; // standard user role — never let clients set this
+
         private readonly IUserRepository _userRepository;
         private readonly IJwtTokenService _jwtTokenService;
+        private readonly IEmailService _emailService;
+        private readonly ILogger<AuthController> _logger;
+        private readonly IHostEnvironment _environment;
 
-        public AuthController(IUserRepository userRepository, IJwtTokenService jwtTokenService)
+        public AuthController(
+            IUserRepository userRepository,
+            IJwtTokenService jwtTokenService,
+            IEmailService emailService,
+            ILogger<AuthController> logger,
+            IHostEnvironment environment)
         {
             _userRepository = userRepository;
             _jwtTokenService = jwtTokenService;
+            _emailService = emailService;
+            _logger = logger;
+            _environment = environment;
         }
 
         /// <summary>Login with username and password. Returns a JWT token.</summary>
@@ -57,28 +71,42 @@ namespace api.Controllers
                 Name     = request.Username,
                 Email    = string.Empty,
                 Password = PasswordHasher.Hash(request.Password),
-                Role_ID  = request.RoleId
+                Role_ID  = DefaultUserRoleId
             };
 
             int newId = await _userRepository.CreateAsync(user, ct);
             return StatusCode(201, new { message = "User registered successfully.", userId = newId });
         }
 
-        /// <summary>Request a password reset token (returns token for testing - in production send via email).</summary>
+        /// <summary>Request a password reset link. Always returns a generic response to prevent user enumeration.</summary>
         [AllowAnonymous]
         [HttpPost("forgot-password")]
-        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
+        public async Task<IActionResult> ForgotPassword(
+            [FromBody] ForgotPasswordRequest request,
+            CancellationToken ct)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
             var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
-            // Always return 200 to prevent user enumeration
-            if (user == null)
-                return Ok(new { message = "If that account exists, a reset token has been issued." });
 
-            string resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());
-            // In production, email this token; for dev return it directly
-            return Ok(new { message = "Password reset token generated.", resetToken });
+            // Always return the same generic response whether or not the user exists,
+            // and whether or not we are about to send an email — prevents enumeration.
+            if (user != null)
+            {
+                string resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());
+
+                if (_environment.IsDevelopment())
+                {
+                    // OK to log locally for testing — never returned in the response body
+                    _logger.LogInformation("DEV reset token for user {UserId}: {Token}", user.User_ID, resetToken);
+                }
+                else
+                {
+                    await _emailService.SendPasswordResetEmailAsync(user.Email, resetToken, ct);
+                }
+            }
+
+            return Ok(new { message = "If that account exists, a reset link has been sent." });
         }
 
         /// <summary>Reset password using a valid reset token.</summary>
