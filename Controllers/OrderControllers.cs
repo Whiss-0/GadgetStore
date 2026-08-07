@@ -26,6 +26,7 @@ namespace api.Controllers
             return Ok(await _orderRepository.GetAllAsync(ct));
         }
 
+        [Authorize(Policy = "AdminAccess")]
         [HttpGet("user/{userId:int}")]
         public async Task<ActionResult<List<Order>>> GetByUser(int userId, CancellationToken ct)
         {
@@ -45,6 +46,12 @@ namespace api.Controllers
         {
             var order = await _orderRepository.GetByIdAsync(id, ct);
             if (order == null) return NotFound(new { message = $"Order with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (order.user_id != userId && !User.HasClaim("user_role_id", "1") && !User.HasClaim("user_role_id", "2"))
+                return Forbid();
+
             return Ok(order);
         }
 
@@ -57,7 +64,7 @@ namespace api.Controllers
 
             var order = new Order
             {
-                user_id = dto.User_ID > 0 ? dto.User_ID : userId,
+                user_id = userId,   // never trust dto.User_ID
                 order_date = DateTime.UtcNow,
                 status = "Pending",
                 total_amount = dto.TotalAmount

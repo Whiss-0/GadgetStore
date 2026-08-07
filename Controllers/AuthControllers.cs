@@ -55,8 +55,8 @@ namespace api.Controllers
             });
         }
 
-        /// <summary>Register a new user account.</summary>
-        [AllowAnonymous]
+        /// <summary>Create a new user account (admin only).</summary>
+        [Authorize(Policy = "AdminAccess")]
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)
         {
@@ -69,9 +69,9 @@ namespace api.Controllers
             var user = new User
             {
                 Name     = request.Username,
-                Email    = string.Empty,
+                Email    = request.Email,
                 Password = PasswordHasher.Hash(request.Password),
-                Role_ID  = DefaultUserRoleId
+                Role_ID  = request.RoleId
             };
 
             int newId = await _userRepository.CreateAsync(user, ct);
@@ -89,8 +89,8 @@ namespace api.Controllers
 
             var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
 
-            // Always return the same generic response whether or not the user exists,
-            // and whether or not we are about to send an email — prevents enumeration.
+            _logger.LogInformation("Forgot-password called for username: {Username}. User found: {Found}", request.Username, user != null);
+            
             if (user != null)
             {
                 string resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());

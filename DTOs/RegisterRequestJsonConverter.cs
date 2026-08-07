@@ -48,23 +48,16 @@ namespace api.DTOs
                     dto.Password = ReadString(ref reader, options);
                     continue;
                 }
-
-
-                if (propertyName.Equals("office_id", comparison) ||
-                    propertyName.Equals("officeId", comparison))
+                if (propertyName.Equals("email", comparison))
                 {
-                    dto.OfficeId = ReadNullableInt32(ref reader, options);
+                    dto.Email = ReadString(ref reader, options);
                     continue;
                 }
-
-                if (propertyName.Equals("os_id", comparison) ||
-                    propertyName.Equals("osId", comparison))
+                if (propertyName.Equals("role_id", comparison))
                 {
-                    dto.OsId = ReadNullableInt32(ref reader, options);
+                    dto.RoleId = ReadInt32(ref reader, options);
                     continue;
                 }
-
-                reader.Skip();
             }
 
             throw new JsonException("Expected end of object.");
@@ -73,19 +66,10 @@ namespace api.DTOs
         public override void Write(Utf8JsonWriter writer, RegisterRequest value, JsonSerializerOptions options)
         {
             writer.WriteStartObject();
-            writer.WriteString("username", value.Username);
+            writer.WriteString("username", value.Username);     
             writer.WriteString("password", value.Password);
-
-            if (value.OfficeId.HasValue)
-            {
-                writer.WriteNumber("office_id", value.OfficeId.Value);
-            }
-
-            if (value.OsId.HasValue)
-            {
-                writer.WriteNumber("os_id", value.OsId.Value);
-            }
-
+            writer.WriteString("email", value.Email);
+            writer.WriteNumber("role_id", value.RoleId);
             writer.WriteEndObject();
         }
 

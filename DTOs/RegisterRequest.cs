@@ -15,12 +15,12 @@ namespace api.DTOs
         [JsonPropertyName("password")]
         public string Password { get; set; } = string.Empty;
 
-        [JsonPropertyName("office_id")]
-        public int? OfficeId { get; set; }
+        [Required]
+        [EmailAddress]
+        [JsonPropertyName("email")]
+        public string Email { get; set; } = string.Empty;
 
-        [JsonPropertyName("os_id")]
-        public int? OsId { get; set; }
-
-        // role_id intentionally removed — clients must never control their own role
+        [JsonPropertyName("role_id")]
+        public int RoleId { get; set; } = 3; // defaults to standard user; admin can override
     }
 }

@@ -38,6 +38,12 @@ namespace api.Controllers
         {
             var cart = await _cartRepository.GetByIdAsync(id, ct);
             if (cart == null) return NotFound(new { message = $"Cart item with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (cart.user_id != userId && !User.HasClaim("user_role_id", "1"))
+                return Forbid();
+
             return Ok(cart);
         }
 
@@ -49,7 +55,8 @@ namespace api.Controllers
 
             var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             int.TryParse(userIdClaim, out int userId);
-            int effectiveUserId = dto.User_ID > 0 ? dto.User_ID : userId;
+            // Always use the authenticated user's own id — never trust dto.User_ID
+            int effectiveUserId = userId;
 
             // Check if already in cart
             var existing = await _cartRepository.GetByUserAndProductAsync(effectiveUserId, dto.Product_ID, ct);
@@ -75,6 +82,15 @@ namespace api.Controllers
         public async Task<IActionResult> UpdateQuantity(int id, [FromBody] CartQuantityRequest dto, CancellationToken ct)
         {
             if (dto.Quantity < 1) return BadRequest(new { message = "Quantity must be at least 1." });
+
+            var cart = await _cartRepository.GetByIdAsync(id, ct);
+            if (cart == null) return NotFound(new { message = $"Cart item with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (cart.user_id != userId && !User.HasClaim("user_role_id", "1"))
+                return Forbid();
+
             bool updated = await _cartRepository.UpdateQuantityAsync(id, dto.Quantity, ct);
             if (!updated) return NotFound(new { message = $"Cart item with ID {id} not found." });
             return NoContent();
@@ -84,6 +100,14 @@ namespace api.Controllers
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id, CancellationToken ct)
         {
+            var cart = await _cartRepository.GetByIdAsync(id, ct);
+            if (cart == null) return NotFound(new { message = $"Cart item with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (cart.user_id != userId && !User.HasClaim("user_role_id", "1"))
+                return Forbid();
+
             bool deleted = await _cartRepository.DeleteAsync(id, ct);
             if (!deleted) return NotFound(new { message = $"Cart item with ID {id} not found." });
             return NoContent();

@@ -37,6 +37,12 @@ namespace api.Controllers
         {
             var item = await _wishlistRepository.GetByIdAsync(id, ct);
             if (item == null) return NotFound(new { message = $"Wishlist item with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (item.user_id != userId && !User.HasClaim("user_role_id", "1"))
+                return Forbid();
+
             return Ok(item);
         }
 
@@ -48,7 +54,7 @@ namespace api.Controllers
 
             var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             int.TryParse(userIdClaim, out int userId);
-            int effectiveUserId = dto.User_ID > 0 ? dto.User_ID : userId;
+            int effectiveUserId = userId;   // never trust dto.User_ID
 
             // Prevent duplicates
             var existing = await _wishlistRepository.GetByUserAndProductAsync(effectiveUserId, dto.Product_ID, ct);
@@ -63,6 +69,14 @@ namespace api.Controllers
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id, CancellationToken ct)
         {
+            var item = await _wishlistRepository.GetByIdAsync(id, ct);
+            if (item == null) return NotFound(new { message = $"Wishlist item with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (item.user_id != userId && !User.HasClaim("user_role_id", "1"))
+                return Forbid();
+
             bool deleted = await _wishlistRepository.DeleteAsync(id, ct);
             if (!deleted) return NotFound(new { message = $"Wishlist item with ID {id} not found." });
             return NoContent();
