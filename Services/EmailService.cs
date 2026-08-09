@@ -24,6 +24,7 @@ namespace api.Services
 
             var client = new SmtpClient("smtp.gmail.com", 587)
             {
+                UseDefaultCredentials = false,
                 Credentials = new NetworkCredential(fromEmail, appPassword),
                 EnableSsl   = true
             };

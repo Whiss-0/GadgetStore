@@ -90,13 +90,26 @@ namespace api.OrderModule
             return rows > 0;
         }
 
-        private static Order MapOrder(DbDataReader reader) => new Order
+        private static Order MapOrder(DbDataReader reader)
         {
-            order_id = ReadValue(reader, "order_id", 0),
-            user_id = ReadValue(reader, "user_id", 0),
-            order_date = Convert.ToDateTime(reader.GetValue(reader.GetOrdinal("order_date"))),
-            total_amount = ReadValue(reader, "total_amount", 0m),
-            status = ReadValue(reader, "status", "Pending")
-        };
+            // Defensive date parsing — SQLite stores dates as TEXT; handle malformed values.
+            DateTime orderDate;
+            try { orderDate = Convert.ToDateTime(reader.GetValue(reader.GetOrdinal("order_date"))); }
+            catch { orderDate = DateTime.UtcNow; }
+
+            // Defensive decimal parsing — if someone stored '' or a bad value, default to 0.
+            decimal totalAmount;
+            try { totalAmount = ReadValue(reader, "total_amount", 0m); }
+            catch { totalAmount = 0m; }
+
+            return new Order
+            {
+                order_id    = ReadValue(reader, "order_id", 0),
+                user_id     = ReadValue(reader, "user_id", 0),
+                order_date  = orderDate,
+                total_amount = totalAmount,
+                status      = ReadValue(reader, "status", "Pending")
+            };
+        }
     }
 }

@@ -20,7 +20,6 @@ namespace api.DTOs
         [JsonPropertyName("email")]
         public string Email { get; set; } = string.Empty;
 
-        [JsonPropertyName("role_id")]
-        public int RoleId { get; set; } = 3; // defaults to standard user; admin can override
+        // role_id intentionally removed — clients must never control their own role
     }
 }

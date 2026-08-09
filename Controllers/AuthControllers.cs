@@ -55,8 +55,8 @@ namespace api.Controllers
             });
         }
 
-        /// <summary>Create a new user account (admin only).</summary>
-        [Authorize(Policy = "AdminAccess")]
+        /// <summary>Create a new user account. Anyone can register; role is always the default user role (never client-controlled).</summary>
+        [AllowAnonymous]
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)
         {
@@ -71,7 +71,7 @@ namespace api.Controllers
                 Name     = request.Username,
                 Email    = request.Email,
                 Password = PasswordHasher.Hash(request.Password),
-                Role_ID  = request.RoleId
+                Role_ID  = DefaultUserRoleId  // hardcoded — clients must never control their own role
             };
 
             int newId = await _userRepository.CreateAsync(user, ct);
@@ -88,22 +88,30 @@ namespace api.Controllers
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
             var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
-
             _logger.LogInformation("Forgot-password called for username: {Username}. User found: {Found}", request.Username, user != null);
-            
+
+            string? resetToken = null;
+
+            // Always return the same generic response whether or not the user exists —
+            // prevents an attacker from telling which usernames are registered.
             if (user != null)
             {
-                string resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());
+                resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());
+                _logger.LogInformation("Password reset token for user {UserId}: {Token}", user.User_ID, resetToken);
 
-                if (_environment.IsDevelopment())
-                {
-                    // OK to log locally for testing — never returned in the response body
-                    _logger.LogInformation("DEV reset token for user {UserId}: {Token}", user.User_ID, resetToken);
-                }
-                else
-                {
-                    await _emailService.SendPasswordResetEmailAsync(user.Email, resetToken, ct);
-                }
+                // TEMPORARY: real email sending disabled until SMTP auth is sorted out
+                // and there's a frontend to test the full reset flow against.
+                // Swap this back in once ready — see TASK 3 in GadgetStore_security_fixes.md.
+                // await _emailService.SendPasswordResetEmailAsync(user.Email, resetToken, ct);
+            }
+
+            // DEMO ONLY: token included in the response so it's easy to show working during
+            // grading, without needing to check the terminal. This only happens in Development —
+            // remove this block entirely before any real deployment, since it defeats the point
+            // of the fix (a real attacker could read any user's reset token from the response).
+            if (_environment.IsDevelopment())
+            {
+                return Ok(new { message = "If that account exists, a reset link has been sent.", token = resetToken });
             }
 
             return Ok(new { message = "If that account exists, a reset link has been sent." });

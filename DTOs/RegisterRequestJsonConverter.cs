@@ -53,9 +53,11 @@ namespace api.DTOs
                     dto.Email = ReadString(ref reader, options);
                     continue;
                 }
+                // role_id is intentionally ignored — clients must never control their own role;
+                // the server always assigns the default role on registration.
                 if (propertyName.Equals("role_id", comparison))
                 {
-                    dto.RoleId = ReadInt32(ref reader, options);
+                    reader.Skip();
                     continue;
                 }
             }
@@ -69,7 +71,6 @@ namespace api.DTOs
             writer.WriteString("username", value.Username);     
             writer.WriteString("password", value.Password);
             writer.WriteString("email", value.Email);
-            writer.WriteNumber("role_id", value.RoleId);
             writer.WriteEndObject();
         }
 

@@ -93,6 +93,20 @@ namespace api.Controllers
             if (!deleted) return StatusCode(500, new { message = "Failed to delete product." });
             return NoContent();
         }
+
+        /// <summary>Update only the description. Accessible by Moderator (staff) and Admin.</summary>
+        [Authorize(Policy = "ModAccess")]
+        [HttpPatch("{id:int}/description")]
+        public async Task<IActionResult> UpdateDescription(int id, [FromBody] DescriptionUpdateRequest dto, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var existing = await _productRepository.GetByIdAsync(id, ct);
+            if (existing == null) return NotFound(new { message = $"Product with ID {id} not found." });
+            existing.description = dto.Description?.Trim();
+            bool updated = await _productRepository.UpdateAsync(existing, ct);
+            if (!updated) return StatusCode(500, new { message = "Failed to update description." });
+            return Ok(new { message = "Description updated.", description = existing.description });
+        }
     }
 
     public class ProductRequest
@@ -106,5 +120,10 @@ namespace api.Controllers
         public int Stock { get; set; }
         public int? CategoryId { get; set; }
         public string? Image { get; set; }
+    }
+
+    public class DescriptionUpdateRequest
+    {
+        public string? Description { get; set; }
     }
 }
