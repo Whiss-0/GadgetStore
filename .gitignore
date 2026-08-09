@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files with secrets
+conn.env
+.env.production
+.env.local
+.env*.local
+
+# IDE
+.vs/
+.vscode/
+*.user
