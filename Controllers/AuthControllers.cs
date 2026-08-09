@@ -4,6 +4,11 @@ using api.DTOs;
 using api.Security;
 using api.UserModule;
 using api.Services;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace api.Controllers
 {
@@ -15,20 +20,23 @@ namespace api.Controllers
 
         private readonly IUserRepository _userRepository;
         private readonly IJwtTokenService _jwtTokenService;
-        private readonly IEmailService _emailService;
+        private readonly IOtpService _otpService;
+        private readonly IOtpEmailSender _otpEmailSender;
         private readonly ILogger<AuthController> _logger;
         private readonly IHostEnvironment _environment;
 
         public AuthController(
             IUserRepository userRepository,
             IJwtTokenService jwtTokenService,
-            IEmailService emailService,
+            IOtpService otpService,
+            IOtpEmailSender otpEmailSender,
             ILogger<AuthController> logger,
             IHostEnvironment environment)
         {
             _userRepository = userRepository;
             _jwtTokenService = jwtTokenService;
-            _emailService = emailService;
+            _otpService = otpService;
+            _otpEmailSender = otpEmailSender;
             _logger = logger;
             _environment = environment;
         }
@@ -44,14 +52,55 @@ namespace api.Controllers
             if (user == null || !PasswordHasher.Verify(user.Password, request.Password))
                 return Unauthorized(new { message = "Invalid username or password." });
 
+            bool requiresMfa = user.Role_ID == 1; // Admin role id
+
+            if (requiresMfa)
+            {
+                string code = await _otpService.GenerateAsync(user.User_ID, "login", ct);
+                await _otpEmailSender.SendOtpAsync(user.Email, code, ct);
+                return Ok(new { requiresMfa = true, message = "Enter the code sent to your email to finish logging in." });
+            }
+
             string token = _jwtTokenService.GenerateToken(user);
             return Ok(new
             {
+                requiresMfa = false,
                 token,
                 tokenType = "Bearer",
                 userId   = user.User_ID,
                 username = user.Name,
                 roleId   = user.Role_ID
+            });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("login/verify-mfa")]
+        public async Task<IActionResult> VerifyLoginMfa([FromBody] VerifyMfaRequest request, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
+            if (user == null) return BadRequest(new { message = "Invalid code." });
+
+            var result = await _otpService.VerifyAsync(user.User_ID, request.Code, "login", ct);
+            if (result != OtpVerifyResult.Valid)
+            {
+                var message = result switch
+                {
+                    OtpVerifyResult.Expired => "This code has expired. Log in again to get a new one.",
+                    OtpVerifyResult.MaxAttemptsReached => "Too many attempts. Try again in a few minutes.",
+                    _ => "Invalid code."
+                };
+                return BadRequest(new { message });
+            }
+
+            var token = _jwtTokenService.GenerateToken(user);
+            return Ok(new { 
+                token, 
+                tokenType = "Bearer",
+                userId = user.User_ID,
+                username = user.Name,
+                roleId = user.Role_ID 
             });
         }
 
@@ -66,6 +115,10 @@ namespace api.Controllers
             if (existing != null)
                 return Conflict(new { message = "A user with that username already exists." });
 
+            var existingEmail = await _userRepository.GetByEmailAsync(request.Email, ct);
+            if (existingEmail != null)
+                return Conflict(new { message = "That email is already registered." });
+
             var user = new User
             {
                 Name     = request.Username,
@@ -74,47 +127,35 @@ namespace api.Controllers
                 Role_ID  = DefaultUserRoleId  // hardcoded — clients must never control their own role
             };
 
-            int newId = await _userRepository.CreateAsync(user, ct);
-            return StatusCode(201, new { message = "User registered successfully.", userId = newId });
+            try
+            {
+                int newId = await _userRepository.CreateAsync(user, ct);
+                return StatusCode(201, new { message = "User registered successfully.", userId = newId });
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+            {
+                return Conflict(new { message = "That username or email is already in use." });
+            }
         }
 
         /// <summary>Request a password reset link. Always returns a generic response to prevent user enumeration.</summary>
         [AllowAnonymous]
         [HttpPost("forgot-password")]
-        public async Task<IActionResult> ForgotPassword(
-            [FromBody] ForgotPasswordRequest request,
-            CancellationToken ct)
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
             var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
             _logger.LogInformation("Forgot-password called for username: {Username}. User found: {Found}", request.Username, user != null);
 
-            string? resetToken = null;
-
-            // Always return the same generic response whether or not the user exists —
-            // prevents an attacker from telling which usernames are registered.
             if (user != null)
             {
-                resetToken = _jwtTokenService.GeneratePasswordResetToken(user.User_ID.ToString());
-                _logger.LogInformation("Password reset token for user {UserId}: {Token}", user.User_ID, resetToken);
-
-                // TEMPORARY: real email sending disabled until SMTP auth is sorted out
-                // and there's a frontend to test the full reset flow against.
-                // Swap this back in once ready — see TASK 3 in GadgetStore_security_fixes.md.
-                // await _emailService.SendPasswordResetEmailAsync(user.Email, resetToken, ct);
+                string code = await _otpService.GenerateAsync(user.User_ID, "reset", ct);
+                await _otpEmailSender.SendOtpAsync(user.Email, code, ct);
             }
 
-            // DEMO ONLY: token included in the response so it's easy to show working during
-            // grading, without needing to check the terminal. This only happens in Development —
-            // remove this block entirely before any real deployment, since it defeats the point
-            // of the fix (a real attacker could read any user's reset token from the response).
-            if (_environment.IsDevelopment())
-            {
-                return Ok(new { message = "If that account exists, a reset link has been sent.", token = resetToken });
-            }
-
-            return Ok(new { message = "If that account exists, a reset link has been sent." });
+            // Same generic response either way — don't reveal which usernames exist.
+            return Ok(new { message = "If that account exists, a reset code has been sent." });
         }
 
         /// <summary>Reset password using a valid reset token.</summary>
@@ -124,22 +165,23 @@ namespace api.Controllers
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            if (!_jwtTokenService.TryValidatePasswordResetToken(request.Token, out string userId))
-                return BadRequest(new { message = "Invalid or expired reset token." });
+            var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
+            if (user == null) return BadRequest(new { message = "Invalid code or username." });
 
-            if (!int.TryParse(userId, out int id))
-                return BadRequest(new { message = "Invalid token payload." });
+            var result = await _otpService.VerifyAsync(user.User_ID, request.Code, "reset", ct);
+            if (result != OtpVerifyResult.Valid)
+            {
+                var message = result switch
+                {
+                    OtpVerifyResult.Expired => "This code has expired. Request a new one.",
+                    OtpVerifyResult.MaxAttemptsReached => "Too many attempts. Try again in a few minutes.",
+                    _ => "Invalid code."
+                };
+                return BadRequest(new { message });
+            }
 
-            var user = await _userRepository.GetByIdAsync(id, ct);
-            if (user == null)
-                return NotFound(new { message = "User not found." });
-
-            string newHash = PasswordHasher.Hash(request.NewPassword);
-            bool updated = await _userRepository.UpdatePasswordAsync(id, newHash, ct);
-            if (!updated)
-                return StatusCode(500, new { message = "Failed to update password." });
-
-            return Ok(new { message = "Password reset successfully." });
+            await _userRepository.UpdatePasswordAsync(user.User_ID, PasswordHasher.Hash(request.NewPassword), ct);
+            return Ok(new { message = "Password updated." });
         }
 
         /// <summary>Get the profile of the currently authenticated user.</summary>

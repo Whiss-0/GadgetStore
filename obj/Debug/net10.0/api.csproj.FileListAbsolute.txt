@@ -72,3 +72,9 @@ C:\gadgetSystem\api\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerGen.dll
 C:\gadgetSystem\api\bin\Debug\net10.0\Swashbuckle.AspNetCore.SwaggerUI.dll
 C:\gadgetSystem\api\bin\Debug\net10.0\System.IdentityModel.Tokens.Jwt.dll
 C:\gadgetSystem\api\obj\Debug\net10.0\api.sourcelink.json
+C:\gadgetSystem\api\bin\Debug\net10.0\AngleSharp.dll
+C:\gadgetSystem\api\bin\Debug\net10.0\AngleSharp.Css.dll
+C:\gadgetSystem\api\bin\Debug\net10.0\BouncyCastle.Cryptography.dll
+C:\gadgetSystem\api\bin\Debug\net10.0\HtmlSanitizer.dll
+C:\gadgetSystem\api\bin\Debug\net10.0\MailKit.dll
+C:\gadgetSystem\api\bin\Debug\net10.0\MimeKit.dll

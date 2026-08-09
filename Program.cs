@@ -124,6 +124,14 @@ builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 // Register Email Service
 builder.Services.AddScoped<IEmailService, EmailService>();
 
+builder.Services.AddScoped<SmtpOtpEmailSender>();
+builder.Services.AddScoped<IOtpEmailSender>(sp =>
+    builder.Environment.IsDevelopment()
+        ? sp.GetRequiredService<DevOtpEmailSender>()
+        : sp.GetRequiredService<SmtpOtpEmailSender>());
+builder.Services.AddScoped<DevOtpEmailSender>();
+builder.Services.AddScoped<IOtpService, OtpService>();
+
 var configuredCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
     .Where(origin => !string.IsNullOrWhiteSpace(origin))
     .Select(origin => origin.Trim().TrimEnd('/'))
@@ -173,6 +181,15 @@ else
 
 app.UseCors("ConfiguredOrigins");
 app.UseAuthentication();
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Append("X-Frame-Options", "DENY");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; script-src 'self'; object-src 'none';");
+    await next();
+});
+
 app.UseAuthorization();
 app.MapControllers();
 
