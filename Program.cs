@@ -25,6 +25,7 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new RegisterRequestJsonConverter());
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 
 // Configure Swagger/OpenAPI

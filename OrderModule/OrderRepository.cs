@@ -7,7 +7,7 @@ namespace api.OrderModule
     {
         public OrderRepository(MyCon dbConnection) : base(dbConnection) { }
 
-        private const string SelectCols = "order_id, user_id, order_date, total_amount, status";
+        private const string SelectCols = "order_id, user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status";
 
         public async Task<Order?> GetByIdAsync(int id, CancellationToken ct = default)
         {
@@ -50,15 +50,19 @@ namespace api.OrderModule
         {
             if (order is null) throw new ArgumentNullException(nameof(order));
             const string sql = @"
-                INSERT INTO orders (user_id, order_date, total_amount, status)
-                VALUES (@user_id, @order_date, @total_amount, @status);
+                INSERT INTO orders (user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status)
+                VALUES (@user_id, @order_date, @total_amount, @status, @shipping_address, @phone_number, @payment_method, @payment_status);
                 SELECT last_insert_rowid();";
             var parameters = new[]
             {
                 CreateParameter("@user_id", order.user_id),
                 CreateParameter("@order_date", order.order_date.ToString("yyyy-MM-dd HH:mm:ss")),
                 CreateParameter("@total_amount", order.total_amount),
-                CreateParameter("@status", order.status)
+                CreateParameter("@status", order.status),
+                CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
+                CreateParameter("@payment_method", order.payment_method),
+                CreateParameter("@payment_status", order.payment_status)
             };
             var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
             int newId = Convert.ToInt32(newIdScalar);
@@ -69,13 +73,17 @@ namespace api.OrderModule
         public async Task<bool> UpdateAsync(Order order, CancellationToken ct = default)
         {
             if (order is null) throw new ArgumentNullException(nameof(order));
-            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, status = @status WHERE order_id = @id;";
+            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, status = @status, shipping_address = @shipping_address, phone_number = @phone_number, payment_method = @payment_method, payment_status = @payment_status WHERE order_id = @id;";
             var parameters = new[]
             {
                 CreateParameter("@user_id", order.user_id),
                 CreateParameter("@order_date", order.order_date.ToString("yyyy-MM-dd HH:mm:ss")),
                 CreateParameter("@total_amount", order.total_amount),
                 CreateParameter("@status", order.status),
+                CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
+                CreateParameter("@payment_method", order.payment_method),
+                CreateParameter("@payment_status", order.payment_status),
                 CreateParameter("@id", order.order_id)
             };
             int rows = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
@@ -104,11 +112,15 @@ namespace api.OrderModule
 
             return new Order
             {
-                order_id    = ReadValue(reader, "order_id", 0),
-                user_id     = ReadValue(reader, "user_id", 0),
-                order_date  = orderDate,
-                total_amount = totalAmount,
-                status      = ReadValue(reader, "status", "Pending")
+                order_id         = ReadValue(reader, "order_id", 0),
+                user_id          = ReadValue(reader, "user_id", 0),
+                order_date       = orderDate,
+                total_amount     = totalAmount,
+                status           = ReadValue(reader, "status", "Pending"),
+                shipping_address = ReadValue<string?>(reader, "shipping_address", null),
+                phone_number     = ReadValue<string?>(reader, "phone_number", null),
+                payment_method   = ReadValue(reader, "payment_method", "COD"),
+                payment_status   = ReadValue(reader, "payment_status", "Unpaid")
             };
         }
     }

@@ -7,5 +7,9 @@ namespace api.OrderModule
         public DateTime order_date { get; set; }
         public decimal total_amount { get; set; }
         public string status { get; set; } = "Pending";
+        public string? shipping_address { get; set; }
+        public string? phone_number { get; set; }
+        public string payment_method { get; set; } = "COD";
+        public string payment_status { get; set; } = "Unpaid";
     }
 }

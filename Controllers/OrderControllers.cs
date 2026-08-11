@@ -62,12 +62,23 @@ namespace api.Controllers
             var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             int.TryParse(userIdClaim, out int userId);
 
+            // Card/GCash are simulated: mark payment_status as paid immediately since
+            // there's no real gateway behind this. COD stays Unpaid until it's paid
+            // on delivery. `status` (shipping progress) always starts at 'Pending' —
+            // never write "Paid (Simulated)" into status, it violates that column's
+            // CHECK constraint.
+            string paymentStatus = dto.PaymentMethod == "COD" ? "Unpaid" : "Paid (Simulated)";
+
             var order = new Order
             {
-                user_id = userId,   // never trust dto.User_ID
-                order_date = DateTime.UtcNow,
-                status = "Pending",
-                total_amount = dto.TotalAmount
+                user_id           = userId,   // never trust a client-supplied user id
+                order_date        = DateTime.UtcNow,
+                status            = "Pending",
+                total_amount      = dto.TotalAmount,
+                shipping_address  = dto.ShippingAddress,
+                phone_number      = dto.PhoneNumber,
+                payment_method    = dto.PaymentMethod,
+                payment_status    = paymentStatus
             };
             int newId = await _orderRepository.CreateAsync(order, ct);
             return CreatedAtAction(nameof(GetById), new { id = newId }, order);
@@ -100,9 +111,20 @@ namespace api.Controllers
 
     public class OrderRequest
     {
-        public int User_ID { get; set; }
-        [System.ComponentModel.DataAnnotations.Range(0, double.MaxValue)]
+        [System.ComponentModel.DataAnnotations.Required]
         public decimal TotalAmount { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.StringLength(300)]
+        public string ShippingAddress { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.Phone]
+        public string PhoneNumber { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.RegularExpression("^(COD|Card|GCash)$")]
+        public string PaymentMethod { get; set; } = "COD";
     }
 
     public class OrderUpdateRequest

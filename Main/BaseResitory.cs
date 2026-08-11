@@ -260,6 +260,14 @@ namespace api.Main
 
             if (targetType == typeof(decimal))
             {
+                // SQLite may store numeric columns as TEXT (e.g. empty string inserted via a bad row).
+                // Convert.ToDecimal throws FormatException on "" — use TryParse as a safe fallback.
+                if (value is string strDecimal)
+                {
+                    return decimal.TryParse(strDecimal, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal parsed)
+                        ? (T)(object)parsed
+                        : (T)(object)defaultValue;
+                }
                 return (T)(object)Convert.ToDecimal(value, CultureInfo.InvariantCulture);
             }
 
