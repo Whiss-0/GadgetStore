@@ -200,8 +200,47 @@ namespace api.Controllers
             {
                 userId   = user.User_ID,
                 username = user.Name,
+                email    = user.Email,
+                address  = user.Address,
                 roleId   = user.Role_ID
             });
         }
+
+        /// <summary>Update the profile of the currently authenticated user.</summary>
+        [Authorize(Policy = "UserAccess")]
+        [HttpPut("me")]
+        public async Task<IActionResult> UpdateMe([FromBody] UpdateProfileRequest request, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+                return Unauthorized();
+
+            var user = await _userRepository.GetByIdAsync(userId, ct);
+            if (user == null) return NotFound();
+
+            user.Name = request.Name ?? user.Name;
+            user.Email = request.Email ?? user.Email;
+            user.Address = request.Address ?? user.Address;
+
+            bool updated = await _userRepository.UpdateAsync(user, ct);
+            if (!updated) return StatusCode(500, new { message = "Failed to update profile." });
+
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                await _userRepository.UpdatePasswordAsync(userId, PasswordHasher.Hash(request.Password), ct);
+            }
+
+            return Ok(new { message = "Profile updated successfully." });
+        }
+    }
+
+    public class UpdateProfileRequest
+    {
+        public string? Name { get; set; }
+        public string? Email { get; set; }
+        public string? Address { get; set; }
+        public string? Password { get; set; }
     }
 }

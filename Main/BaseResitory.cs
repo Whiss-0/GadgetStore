@@ -201,6 +201,10 @@ namespace api.Main
             int? size = null,
             ParameterDirection direction = ParameterDirection.Input)
         {
+            if (value is decimal d)
+            {
+                value = Convert.ToDouble(d);
+            }
             var p = new SqliteParameter(name, value ?? DBNull.Value);
             p.Direction = direction;
             if (dbType.HasValue) p.DbType = dbType.Value;

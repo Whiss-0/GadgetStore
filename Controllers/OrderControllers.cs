@@ -69,6 +69,8 @@ namespace api.Controllers
             // CHECK constraint.
             string paymentStatus = dto.PaymentMethod == "COD" ? "Unpaid" : "Paid (Simulated)";
 
+            Console.WriteLine($"[ORDER CREATE] Received TotalAmount: '{dto.TotalAmount}', PaymentMethod: '{dto.PaymentMethod}'");
+
             var order = new Order
             {
                 user_id           = userId,   // never trust a client-supplied user id

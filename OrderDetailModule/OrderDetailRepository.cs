@@ -44,10 +44,34 @@ namespace api.OrderDetailModule
                 CreateParameter("@quantity", detail.quantity),
                 CreateParameter("@price", detail.price)
             };
-            var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
-            int newId = Convert.ToInt32(newIdScalar);
-            detail.order_detail_id = newId;
-            return newId;
+            try
+            {
+                var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
+                int newId = Convert.ToInt32(newIdScalar);
+                detail.order_detail_id = newId;
+                return newId;
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19) // Constraint failed
+            {
+                Console.WriteLine($"[FK DEBUG] Constraint failed. OrderId: {detail.order_id}, ProductId: {detail.product_id}");
+                try
+                {
+                    await using var connection = _db.GetConnection();
+                    await connection.OpenAsync(ct);
+                    var cmd1 = connection.CreateCommand();
+                    cmd1.CommandText = $"SELECT COUNT(*) FROM orders WHERE order_id = {detail.order_id}";
+                    var orderCount = await cmd1.ExecuteScalarAsync(ct);
+                    var cmd2 = connection.CreateCommand();
+                    cmd2.CommandText = $"SELECT COUNT(*) FROM products WHERE product_id = {detail.product_id}";
+                    var productCount = await cmd2.ExecuteScalarAsync(ct);
+                    Console.WriteLine($"[FK DEBUG] Order {detail.order_id} exists: {orderCount}. Product {detail.product_id} exists: {productCount}.");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"[FK DEBUG] Failed to verify existence: {e.Message}");
+                }
+                throw;
+            }
         }
 
         public async Task<bool> UpdateAsync(OrderDetail detail, CancellationToken ct = default)

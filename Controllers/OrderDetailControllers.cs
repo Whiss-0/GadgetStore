@@ -40,6 +40,7 @@ namespace api.Controllers
         [HttpPost]
         public async Task<ActionResult<OrderDetail>> Create([FromBody] OrderDetailRequest dto, CancellationToken ct)
         {
+            Console.WriteLine($"[ORDER DETAIL CREATE] Received OrderId: '{dto.OrderId}', ProductId: '{dto.ProductId}', Quantity: '{dto.Quantity}', Price: '{dto.Price}'");
             if (!ModelState.IsValid) return BadRequest(ModelState);
             var detail = new OrderDetail
             {
