@@ -46,6 +46,13 @@ namespace api.ProductsModule
             return await ExecuteReaderToListAsync(sql, MapProduct, parameters, ct: ct);
         }
 
+        public async Task<List<Product>> SearchAsync(string term, CancellationToken ct = default)
+        {
+            var sql = $"SELECT {SelectCols} FROM products WHERE product_name LIKE @term OR brand LIKE @term;";
+            var parameters = new[] { CreateParameter("@term", $"%{term}%") };
+            return await ExecuteReaderToListAsync(sql, MapProduct, parameters, ct: ct);
+        }
+
         public async Task<int> CreateAsync(Product product, CancellationToken ct = default)
         {
             if (product is null) throw new ArgumentNullException(nameof(product));

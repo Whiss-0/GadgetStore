@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using api.DTOs;
 using api.Security;
 using api.UserModule;
@@ -42,6 +43,7 @@ namespace api.Controllers
         }
 
         /// <summary>Login with username and password. Returns a JWT token.</summary>
+        [EnableRateLimiting("auth")]
         [AllowAnonymous]
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
@@ -73,6 +75,7 @@ namespace api.Controllers
             });
         }
 
+        [EnableRateLimiting("otp-verify")]
         [AllowAnonymous]
         [HttpPost("login/verify-mfa")]
         public async Task<IActionResult> VerifyLoginMfa([FromBody] VerifyMfaRequest request, CancellationToken ct)
@@ -105,6 +108,7 @@ namespace api.Controllers
         }
 
         /// <summary>Create a new user account. Anyone can register; role is always the default user role (never client-controlled).</summary>
+        [EnableRateLimiting("auth")]
         [AllowAnonymous]
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)
@@ -139,6 +143,7 @@ namespace api.Controllers
         }
 
         /// <summary>Request a password reset link. Always returns a generic response to prevent user enumeration.</summary>
+        [EnableRateLimiting("auth")]
         [AllowAnonymous]
         [HttpPost("forgot-password")]
         public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
@@ -159,6 +164,7 @@ namespace api.Controllers
         }
 
         /// <summary>Reset password using a valid reset token.</summary>
+        [EnableRateLimiting("otp-verify")]
         [AllowAnonymous]
         [HttpPost("reset-password")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request, CancellationToken ct)

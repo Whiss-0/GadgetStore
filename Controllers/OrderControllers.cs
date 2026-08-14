@@ -100,6 +100,26 @@ namespace api.Controllers
             return CreatedAtAction(nameof(GetById), new { id = newId }, order);
         }
 
+        [HttpPut("{id:int}/cancel")]
+        public async Task<IActionResult> CancelMyOrder(int id, CancellationToken ct)
+        {
+            var order = await _orderRepository.GetByIdAsync(id, ct);
+            if (order == null) return NotFound(new { message = $"Order with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+            if (order.user_id != userId)
+                return Forbid();
+
+            if (order.status != "Pending")
+                return BadRequest(new { message = $"Can't cancel an order that's already '{order.status}'. Contact support instead." });
+
+            order.status = "Cancelled";
+            bool updated = await _orderRepository.UpdateAsync(order, ct);
+            if (!updated) return StatusCode(500, new { message = "Failed to cancel order." });
+            return NoContent();
+        }
+
         [Authorize(Policy = "ModAccess")]
         [HttpPut("{id:int}")]
         public async Task<IActionResult> Update(int id, [FromBody] OrderUpdateRequest dto, CancellationToken ct)

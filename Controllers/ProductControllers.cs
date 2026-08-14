@@ -20,8 +20,13 @@ namespace api.Controllers
         [HttpGet]
         public async Task<ActionResult<object>> GetAll(
             [FromQuery] int? pageNumber, [FromQuery] int? pageSize,
-            [FromQuery] int? categoryId, CancellationToken ct)
+            [FromQuery] int? categoryId, [FromQuery] string? search, CancellationToken ct)
         {
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var results = await _productRepository.SearchAsync(search, ct);
+                return Ok(results);
+            }
             if (categoryId.HasValue)
             {
                 var byCategory = await _productRepository.GetByCategoryAsync(categoryId.Value, ct);

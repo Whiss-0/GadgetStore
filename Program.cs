@@ -16,6 +16,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Models;
 using System.Text;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddInMemoryCollection(ConnEnvFile.LoadConfigurationValues());
@@ -164,6 +166,25 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddFixedWindowLimiter("auth", opt =>
+    {
+        opt.PermitLimit = 5;                // 5 attempts
+        opt.Window = TimeSpan.FromMinutes(1); // per minute
+        opt.QueueLimit = 0;                  // no queueing — reject immediately over the limit
+    });
+
+    options.AddFixedWindowLimiter("otp-verify", opt =>
+    {
+        opt.PermitLimit = 3;               // codes are only 6 digits — keep this tight
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -183,6 +204,7 @@ else
 
 app.UseCors("ConfiguredOrigins");
 app.UseAuthentication();
+app.UseRateLimiter();
 
 app.Use(async (context, next) =>
 {
