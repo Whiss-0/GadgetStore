@@ -99,6 +99,18 @@ namespace api.ProductsModule
             return rows > 0;
         }
 
+        public async Task<bool> DecrementStockAsync(int productId, int quantity, CancellationToken ct = default)
+        {
+            const string sql = "UPDATE products SET stock = stock - @qty WHERE product_id = @id AND stock >= @qty;";
+            var parameters = new[]
+            {
+                CreateParameter("@qty", quantity),
+                CreateParameter("@id", productId)
+            };
+            int rowsAffected = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
+            return rowsAffected > 0;
+        }
+
         private static Product MapProduct(DbDataReader reader)
         {
             int catOrdinal = reader.GetOrdinal("category_id");

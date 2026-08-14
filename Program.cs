@@ -132,6 +132,7 @@ builder.Services.AddScoped<IOtpEmailSender>(sp =>
         : sp.GetRequiredService<SmtpOtpEmailSender>());
 builder.Services.AddScoped<DevOtpEmailSender>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IOrderEmailSender, SmtpOrderEmailSender>();
 
 var configuredCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()?
     .Where(origin => !string.IsNullOrWhiteSpace(origin))

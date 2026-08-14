@@ -270,7 +270,7 @@ namespace api.Main
                 {
                     return decimal.TryParse(strDecimal, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal parsed)
                         ? (T)(object)parsed
-                        : (T)(object)defaultValue;
+                        : defaultValue;
                 }
                 return (T)(object)Convert.ToDecimal(value, CultureInfo.InvariantCulture);
             }

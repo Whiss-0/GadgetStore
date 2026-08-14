@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.OrderDetailModule;
+using api.ProductsModule;
 
 namespace api.Controllers
 {
@@ -10,10 +11,12 @@ namespace api.Controllers
     public class OrderDetailController : ControllerBase
     {
         private readonly IOrderDetailRepository _orderDetailRepository;
+        private readonly IProductRepository _productRepository;
 
-        public OrderDetailController(IOrderDetailRepository orderDetailRepository)
+        public OrderDetailController(IOrderDetailRepository orderDetailRepository, IProductRepository productRepository)
         {
             _orderDetailRepository = orderDetailRepository;
+            _productRepository = productRepository;
         }
 
         [Authorize(Policy = "AdminAccess")]
@@ -42,6 +45,18 @@ namespace api.Controllers
         {
             Console.WriteLine($"[ORDER DETAIL CREATE] Received OrderId: '{dto.OrderId}', ProductId: '{dto.ProductId}', Quantity: '{dto.Quantity}', Price: '{dto.Price}'");
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var product = await _productRepository.GetByIdAsync(dto.ProductId, ct);
+            if (product == null)
+                return NotFound(new { message = $"Product {dto.ProductId} not found." });
+
+            if (product.stock < dto.Quantity)
+                return BadRequest(new { message = $"Only {product.stock} of '{product.product_name}' left in stock." });
+
+            bool decremented = await _productRepository.DecrementStockAsync(dto.ProductId, dto.Quantity, ct);
+            if (!decremented)
+                return BadRequest(new { message = $"'{product.product_name}' went out of stock while you were checking out." });
+
             var detail = new OrderDetail
             {
                 order_id = dto.OrderId,

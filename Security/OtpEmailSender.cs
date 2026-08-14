@@ -89,4 +89,61 @@ namespace api.Security
             }
         }
     }
+
+    public interface IOrderEmailSender
+    {
+        Task SendOrderConfirmationAsync(string toEmail, int orderId, decimal total, string paymentMethod, CancellationToken ct = default);
+    }
+
+    public class SmtpOrderEmailSender : IOrderEmailSender
+    {
+        private readonly IConfiguration _config;
+        private readonly ILogger<SmtpOrderEmailSender> _logger;
+
+        public SmtpOrderEmailSender(IConfiguration config, ILogger<SmtpOrderEmailSender> logger)
+        {
+            _config = config;
+            _logger = logger;
+        }
+
+        public async Task SendOrderConfirmationAsync(string toEmail, int orderId, decimal total, string paymentMethod, CancellationToken ct = default)
+        {
+            var host     = _config["Smtp:Host"]     ?? "smtp.gmail.com";
+            var portStr  = _config["Smtp:Port"]     ?? "587";
+            var user     = _config["Smtp:Username"] ?? throw new InvalidOperationException("Smtp:Username is not configured.");
+            var pass     = _config["Smtp:Password"] ?? throw new InvalidOperationException("Smtp:Password is not configured.");
+            var fromName = _config["Smtp:FromName"] ?? "GadgetStore";
+            var from     = _config["Smtp:From"]     ?? user;
+
+            var message = new MimeMessage();
+            message.From.Add(new MailboxAddress(fromName, from));
+            message.To.Add(new MailboxAddress(toEmail, toEmail));
+            message.Subject = $"Order Confirmed — PO-{orderId:00000}";
+            message.Body = new BodyBuilder
+            {
+                HtmlBody = $"""
+                    <p>Thanks for your order!</p>
+                    <p><strong>Order:</strong> PO-{orderId:00000}<br/>
+                    <strong>Total:</strong> ${total:0.00}<br/>
+                    <strong>Payment method:</strong> {paymentMethod}</p>
+                    <p>You can check your order status any time by logging in.</p>
+                    """
+            }.ToMessageBody();
+
+            try
+            {
+                using var client = new SmtpClient();
+                await client.ConnectAsync(host, int.Parse(portStr), SecureSocketOptions.StartTls, ct);
+                await client.AuthenticateAsync(user, pass, ct);
+                await client.SendAsync(message, ct);
+                await client.DisconnectAsync(true, ct);
+            }
+            catch (Exception ex)
+            {
+                // Don't let a failed confirmation email fail the whole order —
+                // log it and move on, the order itself already succeeded.
+                _logger.LogWarning(ex, "Failed to send order confirmation email for order {OrderId}.", orderId);
+            }
+        }
+    }
 }

@@ -11,5 +11,6 @@ namespace api.ProductsModule
         Task<int> CreateAsync(Product product, CancellationToken ct = default);
         Task<bool> UpdateAsync(Product product, CancellationToken ct = default);
         Task<bool> DeleteAsync(int id, CancellationToken ct = default);
+        Task<bool> DecrementStockAsync(int productId, int quantity, CancellationToken ct = default);
     }
 }

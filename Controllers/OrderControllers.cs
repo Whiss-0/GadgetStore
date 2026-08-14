@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.Main;
 using api.OrderModule;
+using api.UserModule;
+using api.Security;
 
 namespace api.Controllers
 {
@@ -11,10 +13,14 @@ namespace api.Controllers
     public class OrderController : ControllerBase
     {
         private readonly IOrderRepository _orderRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly IOrderEmailSender _orderEmailSender;
 
-        public OrderController(IOrderRepository orderRepository)
+        public OrderController(IOrderRepository orderRepository, IUserRepository userRepository, IOrderEmailSender orderEmailSender)
         {
             _orderRepository = orderRepository;
+            _userRepository = userRepository;
+            _orderEmailSender = orderEmailSender;
         }
 
         [Authorize(Policy = "AdminAccess")]
@@ -83,6 +89,14 @@ namespace api.Controllers
                 payment_status    = paymentStatus
             };
             int newId = await _orderRepository.CreateAsync(order, ct);
+
+            // Best-effort confirmation email — doesn't block or fail the order if it errors.
+            var user = await _userRepository.GetByIdAsync(userId, ct);
+            if (user != null && !string.IsNullOrWhiteSpace(user.Email))
+            {
+                _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newId, dto.TotalAmount, dto.PaymentMethod, ct);
+            }
+
             return CreatedAtAction(nameof(GetById), new { id = newId }, order);
         }
 
