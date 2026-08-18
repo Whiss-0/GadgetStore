@@ -63,7 +63,10 @@ namespace api.Controllers
                 price = dto.Price,
                 stock = dto.Stock,
                 category_id = dto.CategoryId,
-                image = dto.Image
+                image = dto.Image,
+                ram_gb = dto.RamGb,
+                processor = dto.Processor,
+                storage_gb = dto.StorageGb
             };
             int newId = await _productRepository.CreateAsync(product, ct);
             return CreatedAtAction(nameof(GetById), new { id = newId }, product);
@@ -83,6 +86,9 @@ namespace api.Controllers
             existing.stock = dto.Stock;
             existing.category_id = dto.CategoryId;
             existing.image = dto.Image;
+            existing.ram_gb = dto.RamGb;
+            existing.processor = dto.Processor;
+            existing.storage_gb = dto.StorageGb;
             bool updated = await _productRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update product." });
             return NoContent();
@@ -125,6 +131,9 @@ namespace api.Controllers
         public int Stock { get; set; }
         public int? CategoryId { get; set; }
         public string? Image { get; set; }
+        public int? RamGb { get; set; }
+        public string? Processor { get; set; }
+        public int? StorageGb { get; set; }
     }
 
     public class DescriptionUpdateRequest

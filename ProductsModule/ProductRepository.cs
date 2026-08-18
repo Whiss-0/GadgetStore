@@ -7,7 +7,7 @@ namespace api.ProductsModule
     {
         public ProductRepository(MyCon dbConnection) : base(dbConnection) { }
 
-        private const string SelectCols = "product_id, category_id, product_name, brand, price, description, image, stock";
+        private const string SelectCols = "product_id, category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb";
 
         public async Task<Product?> GetByIdAsync(int id, CancellationToken ct = default)
         {
@@ -57,8 +57,8 @@ namespace api.ProductsModule
         {
             if (product is null) throw new ArgumentNullException(nameof(product));
             const string sql = @"
-                INSERT INTO products (category_id, product_name, brand, price, description, image, stock)
-                VALUES (@category_id, @product_name, @brand, @price, @description, @image, @stock);
+                INSERT INTO products (category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb)
+                VALUES (@category_id, @product_name, @brand, @price, @description, @image, @stock, @ram_gb, @processor, @storage_gb);
                 SELECT last_insert_rowid();";
             var parameters = new[]
             {
@@ -68,7 +68,10 @@ namespace api.ProductsModule
                 CreateParameter("@price", product.price),
                 CreateParameter("@description", (object?)product.description ?? DBNull.Value),
                 CreateParameter("@image", (object?)product.image ?? DBNull.Value),
-                CreateParameter("@stock", product.stock)
+                CreateParameter("@stock", product.stock),
+                CreateParameter("@ram_gb", (object?)product.ram_gb ?? DBNull.Value),
+                CreateParameter("@processor", (object?)product.processor ?? DBNull.Value),
+                CreateParameter("@storage_gb", (object?)product.storage_gb ?? DBNull.Value)
             };
             var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
             int newId = Convert.ToInt32(newIdScalar);
@@ -81,7 +84,8 @@ namespace api.ProductsModule
             if (product is null) throw new ArgumentNullException(nameof(product));
             const string sql = @"
                 UPDATE products SET category_id = @category_id, product_name = @product_name, brand = @brand,
-                    price = @price, description = @description, image = @image, stock = @stock
+                    price = @price, description = @description, image = @image, stock = @stock,
+                    ram_gb = @ram_gb, processor = @processor, storage_gb = @storage_gb
                 WHERE product_id = @id;";
             var parameters = new[]
             {
@@ -92,6 +96,9 @@ namespace api.ProductsModule
                 CreateParameter("@description", (object?)product.description ?? DBNull.Value),
                 CreateParameter("@image", (object?)product.image ?? DBNull.Value),
                 CreateParameter("@stock", product.stock),
+                CreateParameter("@ram_gb", (object?)product.ram_gb ?? DBNull.Value),
+                CreateParameter("@processor", (object?)product.processor ?? DBNull.Value),
+                CreateParameter("@storage_gb", (object?)product.storage_gb ?? DBNull.Value),
                 CreateParameter("@id", product.product_id)
             };
             int rows = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
@@ -124,6 +131,9 @@ namespace api.ProductsModule
             int brandOrdinal = reader.GetOrdinal("brand");
             int descOrdinal = reader.GetOrdinal("description");
             int imgOrdinal = reader.GetOrdinal("image");
+            int ramOrdinal = reader.GetOrdinal("ram_gb");
+            int procOrdinal = reader.GetOrdinal("processor");
+            int storageOrdinal = reader.GetOrdinal("storage_gb");
             return new Product
             {
                 product_id = ReadValue(reader, "product_id", 0),
@@ -133,7 +143,10 @@ namespace api.ProductsModule
                 price = ReadValue(reader, "price", 0m),
                 description = reader.IsDBNull(descOrdinal) ? null : reader.GetString(descOrdinal),
                 image = reader.IsDBNull(imgOrdinal) ? null : reader.GetString(imgOrdinal),
-                stock = ReadValue(reader, "stock", 0)
+                stock = ReadValue(reader, "stock", 0),
+                ram_gb = reader.IsDBNull(ramOrdinal) ? null : Convert.ToInt32(reader.GetValue(ramOrdinal)),
+                processor = reader.IsDBNull(procOrdinal) ? null : reader.GetString(procOrdinal),
+                storage_gb = reader.IsDBNull(storageOrdinal) ? null : Convert.ToInt32(reader.GetValue(storageOrdinal))
             };
         }
     }

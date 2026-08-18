@@ -10,5 +10,8 @@ namespace api.ProductsModule
         public string? description { get; set; }
         public string? image { get; set; }
         public int stock { get; set; }
+        public int? ram_gb { get; set; }
+        public string? processor { get; set; }
+        public int? storage_gb { get; set; }
     }
 }

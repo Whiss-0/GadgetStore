@@ -226,17 +226,23 @@ namespace api.Controllers
             var user = await _userRepository.GetByIdAsync(userId, ct);
             if (user == null) return NotFound();
 
+            // Require current password verification before allowing a password change.
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                if (string.IsNullOrWhiteSpace(request.CurrentPassword) ||
+                    !PasswordHasher.Verify(user.Password, request.CurrentPassword))
+                {
+                    return BadRequest(new { message = "Current password is incorrect." });
+                }
+                await _userRepository.UpdatePasswordAsync(userId, PasswordHasher.Hash(request.Password), ct);
+            }
+
             user.Name = request.Name ?? user.Name;
             user.Email = request.Email ?? user.Email;
             user.Address = request.Address ?? user.Address;
 
             bool updated = await _userRepository.UpdateAsync(user, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update profile." });
-
-            if (!string.IsNullOrWhiteSpace(request.Password))
-            {
-                await _userRepository.UpdatePasswordAsync(userId, PasswordHasher.Hash(request.Password), ct);
-            }
 
             return Ok(new { message = "Profile updated successfully." });
         }
@@ -248,5 +254,6 @@ namespace api.Controllers
         public string? Email { get; set; }
         public string? Address { get; set; }
         public string? Password { get; set; }
+        public string? CurrentPassword { get; set; }
     }
 }
