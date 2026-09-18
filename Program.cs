@@ -214,6 +214,8 @@ app.Use(async (context, next) =>
     await next();
 });
 
+app.UseStaticFiles(); // serves files from wwwroot/ — placed after the security-headers middleware so uploaded images get those headers too
+
 app.UseAuthorization();
 app.MapControllers();
 

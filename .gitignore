@@ -17,3 +17,7 @@ conn.env
 .vs/
 .vscode/
 *.user
+
+# Uploaded product images — live on the server's disk, not in source control
+wwwroot/uploads/products/*
+!wwwroot/uploads/products/.gitkeep

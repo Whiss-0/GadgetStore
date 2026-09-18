@@ -118,6 +118,58 @@ namespace api.Controllers
             if (!updated) return StatusCode(500, new { message = "Failed to update description." });
             return Ok(new { message = "Description updated.", description = existing.description });
         }
+
+        [Authorize(Policy = "AdminAccess")]
+        [HttpPost("upload-image")]
+        [RequestSizeLimit(5 * 1024 * 1024)] // 5 MB cap
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "No file was uploaded." });
+
+            var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp" };
+            if (!allowedTypes.Contains(file.ContentType))
+                return BadRequest(new { message = "Only JPG, PNG, or WebP images are allowed." });
+
+            var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            if (!allowedExtensions.Contains(extension))
+                return BadRequest(new { message = "Only JPG, PNG, or WebP images are allowed." });
+
+            if (!await IsGenuineImageAsync(file, extension, ct))
+                return BadRequest(new { message = "That file doesn't look like a genuine image." });
+
+            // Random filename — never trust or reuse the client's original filename directly on disk.
+            var fileName = $"{Guid.NewGuid()}{extension}";
+            var uploadsPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "products");
+            Directory.CreateDirectory(uploadsPath); // safety net if it somehow doesn't exist yet
+            var filePath = Path.Combine(uploadsPath, fileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream, ct);
+            }
+
+            var publicUrl = $"{Request.Scheme}://{Request.Host}/uploads/products/{fileName}";
+            return Ok(new { url = publicUrl });
+        }
+
+        private static readonly Dictionary<string, byte[][]> ImageSignatures = new()
+        {
+            [".jpg"]  = new[] { new byte[] { 0xFF, 0xD8, 0xFF } },
+            [".jpeg"] = new[] { new byte[] { 0xFF, 0xD8, 0xFF } },
+            [".png"]  = new[] { new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+            [".webp"] = new[] { new byte[] { 0x52, 0x49, 0x46, 0x46 } }, // "RIFF" — WebP's container format
+        };
+
+        private static async Task<bool> IsGenuineImageAsync(IFormFile file, string extension, CancellationToken ct)
+        {
+            if (!ImageSignatures.TryGetValue(extension, out var signatures)) return false;
+            var header = new byte[8];
+            await using var stream = file.OpenReadStream();
+            int read = await stream.ReadAsync(header, 0, header.Length, ct);
+            return signatures.Any(sig => read >= sig.Length && header.Take(sig.Length).SequenceEqual(sig));
+        }
     }
 
     public class ProductRequest
