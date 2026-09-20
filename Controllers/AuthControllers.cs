@@ -5,6 +5,7 @@ using api.DTOs;
 using api.Security;
 using api.UserModule;
 using api.Services;
+using api.ActivityModule;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,7 @@ namespace api.Controllers
         private readonly IOtpEmailSender _otpEmailSender;
         private readonly ILogger<AuthController> _logger;
         private readonly IHostEnvironment _environment;
+        private readonly IActivityRepository _activityRepository;
 
         public AuthController(
             IUserRepository userRepository,
@@ -32,7 +34,8 @@ namespace api.Controllers
             IOtpService otpService,
             IOtpEmailSender otpEmailSender,
             ILogger<AuthController> logger,
-            IHostEnvironment environment)
+            IHostEnvironment environment,
+            IActivityRepository activityRepository)
         {
             _userRepository = userRepository;
             _jwtTokenService = jwtTokenService;
@@ -40,6 +43,7 @@ namespace api.Controllers
             _otpEmailSender = otpEmailSender;
             _logger = logger;
             _environment = environment;
+            _activityRepository = activityRepository;
         }
 
         /// <summary>Login with username and password. Returns a JWT token.</summary>
@@ -64,6 +68,18 @@ namespace api.Controllers
             }
 
             string token = _jwtTokenService.GenerateToken(user);
+
+            // Record login (non-admin, non-MFA path)
+            _ = TryLogActivityAsync(new ActivityLog
+            {
+                User_ID      = user.User_ID,
+                Actor_User_ID = user.User_ID,
+                Actor_Role   = RoleLabel(user.Role_ID),
+                Activity_Type = "Login",
+                Description  = "Signed in successfully.",
+                Created_At   = DateTime.UtcNow,
+            });
+
             return Ok(new
             {
                 requiresMfa = false,
@@ -98,6 +114,18 @@ namespace api.Controllers
             }
 
             var token = _jwtTokenService.GenerateToken(user);
+
+            // Record login after successful MFA verification
+            _ = TryLogActivityAsync(new ActivityLog
+            {
+                User_ID       = user.User_ID,
+                Actor_User_ID = user.User_ID,
+                Actor_Role    = RoleLabel(user.Role_ID),
+                Activity_Type = "Login",
+                Description   = "Signed in successfully.",
+                Created_At    = DateTime.UtcNow,
+            });
+
             return Ok(new { 
                 token, 
                 tokenType = "Bearer",
@@ -134,6 +162,18 @@ namespace api.Controllers
             try
             {
                 int newId = await _userRepository.CreateAsync(user, ct);
+
+                // Record account creation
+                _ = TryLogActivityAsync(new ActivityLog
+                {
+                    User_ID       = newId,
+                    Actor_User_ID = newId,
+                    Actor_Role    = "User",
+                    Activity_Type = "AccountCreated",
+                    Description   = "Created an account.",
+                    Created_At    = DateTime.UtcNow,
+                });
+
                 return StatusCode(201, new { message = "User registered successfully.", userId = newId });
             }
             catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
@@ -227,6 +267,7 @@ namespace api.Controllers
             if (user == null) return NotFound();
 
             // Require current password verification before allowing a password change.
+            bool passwordChanged = false;
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
                 if (string.IsNullOrWhiteSpace(request.CurrentPassword) ||
@@ -235,6 +276,7 @@ namespace api.Controllers
                     return BadRequest(new { message = "Current password is incorrect." });
                 }
                 await _userRepository.UpdatePasswordAsync(userId, PasswordHasher.Hash(request.Password), ct);
+                passwordChanged = true;
             }
 
             user.Name = request.Name ?? user.Name;
@@ -244,7 +286,42 @@ namespace api.Controllers
             bool updated = await _userRepository.UpdateAsync(user, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update profile." });
 
+            // Record the correct event — password change takes priority over generic profile update
+            string actType = passwordChanged ? "PasswordChanged" : "ProfileUpdated";
+            string actDesc = passwordChanged ? "Changed the account password." : "Updated account details.";
+            _ = TryLogActivityAsync(new ActivityLog
+            {
+                User_ID       = userId,
+                Actor_User_ID = userId,
+                Actor_Role    = RoleLabel(user.Role_ID),
+                Activity_Type = actType,
+                Description   = actDesc,
+                Created_At    = DateTime.UtcNow,
+            });
+
             return Ok(new { message = "Profile updated successfully." });
+        }
+
+        // ---- Private helpers ----
+
+        private static string RoleLabel(int? roleId) => roleId switch
+        {
+            1 => "Admin",
+            2 => "Staff",
+            _ => "User",
+        };
+
+        /// <summary>Best-effort activity log — never breaks the caller on failure.</summary>
+        private async Task TryLogActivityAsync(ActivityLog log)
+        {
+            try
+            {
+                await _activityRepository.CreateAsync(log);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Activity log write failed for type {Type}", log.Activity_Type);
+            }
         }
     }
 

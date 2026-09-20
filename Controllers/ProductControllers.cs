@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.Main;
 using api.ProductsModule;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -10,10 +11,17 @@ namespace api.Controllers
     public class ProductController : ControllerBase
     {
         private readonly IProductRepository _productRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<ProductController> _logger;
 
-        public ProductController(IProductRepository productRepository)
+        public ProductController(
+            IProductRepository productRepository,
+            IActivityRepository activityRepository,
+            ILogger<ProductController> logger)
         {
             _productRepository = productRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         [AllowAnonymous]
@@ -69,6 +77,19 @@ namespace api.Controllers
                 storage_gb = dto.StorageGb
             };
             int newId = await _productRepository.CreateAsync(product, ct);
+
+            var actorId = ActorId();
+            string actorRole = ActorRole();
+            _ = TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID      = actorId,
+                Actor_Role         = actorRole,
+                Activity_Type      = "ProductCreated",
+                Description        = $"Created product #{newId} — {product.product_name}.",
+                Related_Product_ID = newId,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return CreatedAtAction(nameof(GetById), new { id = newId }, product);
         }
 
@@ -91,6 +112,17 @@ namespace api.Controllers
             existing.storage_gb = dto.StorageGb;
             bool updated = await _productRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update product." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID      = ActorId(),
+                Actor_Role         = ActorRole(),
+                Activity_Type      = "ProductUpdated",
+                Description        = $"Updated product #{id}.",
+                Related_Product_ID = id,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -102,6 +134,17 @@ namespace api.Controllers
             if (existing == null) return NotFound(new { message = $"Product with ID {id} not found." });
             bool deleted = await _productRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete product." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID      = ActorId(),
+                Actor_Role         = ActorRole(),
+                Activity_Type      = "ProductDeleted",
+                Description        = $"Deleted product #{id}.",
+                Related_Product_ID = id,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -116,6 +159,17 @@ namespace api.Controllers
             existing.description = dto.Description?.Trim();
             bool updated = await _productRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update description." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID      = ActorId(),
+                Actor_Role         = ActorRole(),
+                Activity_Type      = "ProductDescriptionChanged",
+                Description        = $"Updated description for product #{id}.",
+                Related_Product_ID = id,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return Ok(new { message = "Description updated.", description = existing.description });
         }
 
@@ -151,6 +205,16 @@ namespace api.Controllers
             }
 
             var publicUrl = $"{Request.Scheme}://{Request.Host}/uploads/products/{fileName}";
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID = ActorId(),
+                Actor_Role    = ActorRole(),
+                Activity_Type = "ProductImageUploaded",
+                Description   = "Uploaded a product image.",
+                Created_At    = DateTime.UtcNow,
+            });
+
             return Ok(new { url = publicUrl });
         }
 
@@ -169,6 +233,24 @@ namespace api.Controllers
             await using var stream = file.OpenReadStream();
             int read = await stream.ReadAsync(header, 0, header.Length, ct);
             return signatures.Any(sig => read >= sig.Length && header.Take(sig.Length).SequenceEqual(sig));
+        }
+
+        // ---- Private helpers ----
+
+        private int? ActorId()
+        {
+            var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(claim, out int id) ? id : null;
+        }
+
+        private string ActorRole() =>
+            User.HasClaim("user_role_id", "1") ? "Admin" :
+            User.HasClaim("user_role_id", "2") ? "Staff" : "User";
+
+        private async Task TryLogAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
     }
 

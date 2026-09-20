@@ -11,6 +11,7 @@ using api.OrderDetailModule;
 using api.ReviewModule;
 using api.WishlistModule;
 using api.Services;
+using api.ActivityModule;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Any;
@@ -120,6 +121,7 @@ builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<IOrderDetailRepository, OrderDetailRepository>();
 builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 builder.Services.AddScoped<IWishlistRepository, WishlistRepository>();
+builder.Services.AddScoped<IActivityRepository, ActivityRepository>();
 
 // Register JWT Token Service
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -186,6 +188,14 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+// Ensure activity_logs table exists
+using (var activityScope = app.Services.CreateScope())
+{
+    var activityRepository = activityScope.ServiceProvider
+        .GetRequiredService<IActivityRepository>();
+    await activityRepository.EnsureSchemaAsync();
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

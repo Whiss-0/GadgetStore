@@ -4,6 +4,7 @@ using api.Main;
 using api.OrderModule;
 using api.UserModule;
 using api.Security;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -15,12 +16,21 @@ namespace api.Controllers
         private readonly IOrderRepository _orderRepository;
         private readonly IUserRepository _userRepository;
         private readonly IOrderEmailSender _orderEmailSender;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<OrderController> _logger;
 
-        public OrderController(IOrderRepository orderRepository, IUserRepository userRepository, IOrderEmailSender orderEmailSender)
+        public OrderController(
+            IOrderRepository orderRepository,
+            IUserRepository userRepository,
+            IOrderEmailSender orderEmailSender,
+            IActivityRepository activityRepository,
+            ILogger<OrderController> logger)
         {
             _orderRepository = orderRepository;
             _userRepository = userRepository;
             _orderEmailSender = orderEmailSender;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         [Authorize(Policy = "AdminAccess")]
@@ -90,6 +100,18 @@ namespace api.Controllers
             };
             int newId = await _orderRepository.CreateAsync(order, ct);
 
+            // Record order placed
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID           = userId,
+                Actor_User_ID     = userId,
+                Actor_Role        = "User",
+                Activity_Type     = "OrderPlaced",
+                Description       = $"Placed order #{newId}.",
+                Related_Order_ID  = newId,
+                Created_At        = DateTime.UtcNow,
+            });
+
             // Best-effort confirmation email — doesn't block or fail the order if it errors.
             var user = await _userRepository.GetByIdAsync(userId, ct);
             if (user != null && !string.IsNullOrWhiteSpace(user.Email))
@@ -117,6 +139,19 @@ namespace api.Controllers
             order.status = "Cancelled";
             bool updated = await _orderRepository.UpdateAsync(order, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to cancel order." });
+
+            // Record order cancelled
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID          = order.user_id,
+                Actor_User_ID    = userId,
+                Actor_Role       = "User",
+                Activity_Type    = "OrderCancelled",
+                Description      = $"Cancelled order #{id}.",
+                Related_Order_ID = id,
+                Created_At       = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -130,6 +165,22 @@ namespace api.Controllers
             existing.status = dto.Status ?? existing.status;
             bool updated = await _orderRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update order." });
+
+            // Record status change — actor may be staff or admin
+            var actorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(actorIdClaim, out int actorId);
+            string actorRole = User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID          = existing.user_id,
+                Actor_User_ID    = actorId,
+                Actor_Role       = actorRole,
+                Activity_Type    = "OrderStatusChanged",
+                Description      = $"Changed order #{id} status to {existing.status}.",
+                Related_Order_ID = id,
+                Created_At       = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -142,6 +193,11 @@ namespace api.Controllers
             bool deleted = await _orderRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete order." });
             return NoContent();
+        }
+        private async Task TryLogAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
     }
 

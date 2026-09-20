@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.WishlistModule;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -10,10 +11,17 @@ namespace api.Controllers
     public class WishlistController : ControllerBase
     {
         private readonly IWishlistRepository _wishlistRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<WishlistController> _logger;
 
-        public WishlistController(IWishlistRepository wishlistRepository)
+        public WishlistController(
+            IWishlistRepository wishlistRepository,
+            IActivityRepository activityRepository,
+            ILogger<WishlistController> logger)
         {
             _wishlistRepository = wishlistRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         /// <summary>Get the current user's wishlist.</summary>
@@ -62,6 +70,18 @@ namespace api.Controllers
 
             var wishlist = new Wishlist { user_id = effectiveUserId, product_id = dto.Product_ID };
             int newId = await _wishlistRepository.CreateAsync(wishlist, ct);
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID            = effectiveUserId,
+                Actor_User_ID      = effectiveUserId,
+                Actor_Role         = "User",
+                Activity_Type      = "WishlistItemAdded",
+                Description        = $"Saved product #{dto.Product_ID} to the wishlist.",
+                Related_Product_ID = dto.Product_ID,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return CreatedAtAction(nameof(GetById), new { id = newId }, wishlist);
         }
 
@@ -79,6 +99,18 @@ namespace api.Controllers
 
             bool deleted = await _wishlistRepository.DeleteAsync(id, ct);
             if (!deleted) return NotFound(new { message = $"Wishlist item with ID {id} not found." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID            = item.user_id,
+                Actor_User_ID      = userId,
+                Actor_Role         = "User",
+                Activity_Type      = "WishlistItemRemoved",
+                Description        = $"Removed product #{item.product_id} from the wishlist.",
+                Related_Product_ID = item.product_id,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -90,6 +122,12 @@ namespace api.Controllers
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
             await _wishlistRepository.ClearWishlistAsync(userId, ct);
             return NoContent();
+        }
+
+        private async Task TryLogAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
     }
 

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.CartModule;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -10,10 +11,17 @@ namespace api.Controllers
     public class CartController : ControllerBase
     {
         private readonly ICartRespository _cartRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<CartController> _logger;
 
-        public CartController(ICartRespository cartRepository)
+        public CartController(
+            ICartRespository cartRepository,
+            IActivityRepository activityRepository,
+            ILogger<CartController> logger)
         {
             _cartRepository = cartRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         /// <summary>Get the current user's cart items.</summary>
@@ -74,6 +82,18 @@ namespace api.Controllers
                 quantity = dto.Quantity
             };
             int newId = await _cartRepository.CreateAsync(cart, ct);
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID            = effectiveUserId,
+                Actor_User_ID      = effectiveUserId,
+                Actor_Role         = "User",
+                Activity_Type      = "CartItemAdded",
+                Description        = $"Added product #{dto.Product_ID} to the cart.",
+                Related_Product_ID = dto.Product_ID,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return CreatedAtAction(nameof(GetById), new { id = newId }, cart);
         }
 
@@ -93,6 +113,17 @@ namespace api.Controllers
 
             bool updated = await _cartRepository.UpdateQuantityAsync(id, dto.Quantity, ct);
             if (!updated) return NotFound(new { message = $"Cart item with ID {id} not found." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID       = userId,
+                Actor_User_ID = userId,
+                Actor_Role    = "User",
+                Activity_Type = "CartUpdated",
+                Description   = $"Updated cart item #{id} quantity to {dto.Quantity}.",
+                Created_At    = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -110,6 +141,18 @@ namespace api.Controllers
 
             bool deleted = await _cartRepository.DeleteAsync(id, ct);
             if (!deleted) return NotFound(new { message = $"Cart item with ID {id} not found." });
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID            = cart.user_id,
+                Actor_User_ID      = userId,
+                Actor_Role         = "User",
+                Activity_Type      = "CartItemRemoved",
+                Description        = $"Removed product #{cart.product_id} from the cart.",
+                Related_Product_ID = cart.product_id,
+                Created_At         = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -120,7 +163,24 @@ namespace api.Controllers
             var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
             await _cartRepository.ClearCartAsync(userId, ct);
+
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID       = userId,
+                Actor_User_ID = userId,
+                Actor_Role    = "User",
+                Activity_Type = "CartCleared",
+                Description   = "Cleared the cart.",
+                Created_At    = DateTime.UtcNow,
+            });
+
             return NoContent();
+        }
+
+        private async Task TryLogAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
     }
 

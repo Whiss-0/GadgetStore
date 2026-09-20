@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using api.Main;
 using api.UserModule;
 using api.DTOs;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -11,10 +12,17 @@ namespace api.Controllers
     public class UserController : ControllerBase
     {
         private readonly IUserRepository _userRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<UserController> _logger;
 
-        public UserController(IUserRepository userRepository)
+        public UserController(
+            IUserRepository userRepository,
+            IActivityRepository activityRepository,
+            ILogger<UserController> logger)
         {
             _userRepository = userRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         /// <summary>Get all users (paginated or full list).</summary>
@@ -95,6 +103,38 @@ namespace api.Controllers
             bool updated = await _userRepository.UpdateAsync(existingUser, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update user." });
 
+            // Determine event type — role change is security-sensitive so log strictly
+            var actorClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(actorClaim, out int actorId);
+            string actorRole = User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
+
+            bool roleChanged = dto.Role_ID.HasValue && dto.Role_ID.Value != existingUser.Role_ID;
+            if (roleChanged)
+            {
+                // Strict logging for role changes — surface failure
+                await _activityRepository.CreateAsync(new ActivityLog
+                {
+                    User_ID       = id,
+                    Actor_User_ID = actorId,
+                    Actor_Role    = actorRole,
+                    Activity_Type = "UserRoleChanged",
+                    Description   = $"Changed role for user #{id}.",
+                    Created_At    = DateTime.UtcNow,
+                });
+            }
+            else
+            {
+                _ = TryLogAsync(new ActivityLog
+                {
+                    User_ID       = id,
+                    Actor_User_ID = actorId,
+                    Actor_Role    = actorRole,
+                    Activity_Type = "UserUpdated",
+                    Description   = $"Updated user #{id}.",
+                    Created_At    = DateTime.UtcNow,
+                });
+            }
+
             return NoContent();
         }
 
@@ -109,6 +149,18 @@ namespace api.Controllers
             bool deleted = await _userRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete user." });
 
+            // Strict logging for account deletion — surface failure
+            var actorClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(actorClaim, out int actorId);
+            await _activityRepository.CreateAsync(new ActivityLog
+            {
+                Actor_User_ID = actorId,
+                Actor_Role    = "Admin",
+                Activity_Type = "UserDeleted",
+                Description   = $"Deleted user #{id}.",
+                Created_At    = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -120,6 +172,12 @@ namespace api.Controllers
             Address = user.Address,
             Role_ID = user.Role_ID
         };
+
+        private async Task TryLogAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
+        }
     }
 
     // ---- Request DTOs (only used in User controller) ----
