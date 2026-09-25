@@ -98,6 +98,85 @@ namespace api.OrderModule
             return rows > 0;
         }
 
+        public async Task<int> CreateWithDetailsAsync(
+            Order order,
+            IReadOnlyList<api.OrderDetailModule.OrderDetail> details,
+            CancellationToken ct = default)
+        {
+            if (order is null) throw new ArgumentNullException(nameof(order));
+            if (details is null || details.Count == 0)
+                throw new ArgumentException("At least one order item is required.", nameof(details));
+
+            return await WithTransactionAsync(async (conn, tx) =>
+            {
+                // 1. Insert the order
+                const string insertOrder = @"
+                    INSERT INTO orders (user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status)
+                    VALUES (@user_id, @order_date, @total_amount, @status, @shipping_address, @phone_number, @payment_method, @payment_status);
+                    SELECT last_insert_rowid();";
+
+                var orderParams = new[]
+                {
+                    CreateParameter("@user_id", order.user_id),
+                    CreateParameter("@order_date", order.order_date.ToString("yyyy-MM-dd HH:mm:ss")),
+                    CreateParameter("@total_amount", order.total_amount),
+                    CreateParameter("@status", order.status),
+                    CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                    CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
+                    CreateParameter("@payment_method", order.payment_method),
+                    CreateParameter("@payment_status", order.payment_status),
+                };
+
+                var newIdScalar = await ExecuteScalarAsync<long>(conn, tx, insertOrder, orderParams, ct: ct);
+                int newOrderId = Convert.ToInt32(newIdScalar);
+                order.order_id = newOrderId;
+
+                // 2. For each line item: validate stock, decrement, insert detail
+                foreach (var detail in details)
+                {
+                    // Check product exists and has sufficient stock
+                    const string stockSql = "SELECT stock FROM products WHERE product_id = @pid LIMIT 1;";
+                    var stockParams = new[] { CreateParameter("@pid", detail.product_id) };
+                    var stockRaw = await ExecuteScalarAsync<object>(conn, tx, stockSql, stockParams, ct: ct);
+
+                    if (stockRaw is null || stockRaw is DBNull)
+                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
+
+                    int stock = Convert.ToInt32(stockRaw);
+                    if (stock < detail.quantity)
+                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
+
+                    // Decrement stock atomically within the transaction
+                    const string decrementSql = @"
+                        UPDATE products SET stock = stock - @qty
+                        WHERE product_id = @pid AND stock >= @qty;";
+                    var decrParams = new[]
+                    {
+                        CreateParameter("@qty", detail.quantity),
+                        CreateParameter("@pid", detail.product_id),
+                    };
+                    int affected = await ExecuteNonQueryAsync(conn, tx, decrementSql, decrParams, ct: ct);
+                    if (affected == 0)
+                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
+
+                    // Insert the order detail line
+                    const string insertDetail = @"
+                        INSERT INTO order_details (order_id, product_id, quantity, price)
+                        VALUES (@order_id, @product_id, @quantity, @price);";
+                    var detailParams = new[]
+                    {
+                        CreateParameter("@order_id", newOrderId),
+                        CreateParameter("@product_id", detail.product_id),
+                        CreateParameter("@quantity", detail.quantity),
+                        CreateParameter("@price", detail.price),
+                    };
+                    await ExecuteNonQueryAsync(conn, tx, insertDetail, detailParams, ct: ct);
+                }
+
+                return newOrderId;
+            }, ct: ct);
+        }
+
         private static Order MapOrder(DbDataReader reader)
         {
             // Defensive date parsing — SQLite stores dates as TEXT; handle malformed values.
@@ -125,3 +204,4 @@ namespace api.OrderModule
         }
     }
 }
+

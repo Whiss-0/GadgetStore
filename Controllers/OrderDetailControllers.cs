@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.OrderDetailModule;
+using api.OrderModule;
 using api.ProductsModule;
 
 namespace api.Controllers
@@ -11,11 +12,16 @@ namespace api.Controllers
     public class OrderDetailController : ControllerBase
     {
         private readonly IOrderDetailRepository _orderDetailRepository;
+        private readonly IOrderRepository _orderRepository;
         private readonly IProductRepository _productRepository;
 
-        public OrderDetailController(IOrderDetailRepository orderDetailRepository, IProductRepository productRepository)
+        public OrderDetailController(
+            IOrderDetailRepository orderDetailRepository,
+            IOrderRepository orderRepository,
+            IProductRepository productRepository)
         {
             _orderDetailRepository = orderDetailRepository;
+            _orderRepository = orderRepository;
             _productRepository = productRepository;
         }
 
@@ -26,10 +32,41 @@ namespace api.Controllers
             return Ok(await _orderDetailRepository.GetAllAsync(ct));
         }
 
+        /// <summary>
+        /// Returns all line items for an order, with each line enriched with its product.
+        /// Customers may only view their own orders; staff/admin may view any order.
+        /// </summary>
         [HttpGet("order/{orderId:int}")]
         public async Task<ActionResult<List<OrderDetail>>> GetByOrder(int orderId, CancellationToken ct)
         {
-            return Ok(await _orderDetailRepository.GetByOrderAsync(orderId, ct));
+            // Ownership / authorization check
+            var order = await _orderRepository.GetByIdAsync(orderId, ct);
+            if (order == null)
+                return NotFound(new { message = $"Order {orderId} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            int.TryParse(userIdClaim, out int userId);
+
+            bool isStaffOrAdmin = User.HasClaim("user_role_id", "1") || User.HasClaim("user_role_id", "2");
+            if (!isStaffOrAdmin && order.user_id != userId)
+                return Forbid();
+
+            var details = await _orderDetailRepository.GetByOrderAsync(orderId, ct);
+
+            // Enrich each line with its product (best-effort — deleted products get null)
+            foreach (var detail in details)
+            {
+                try
+                {
+                    detail.product = await _productRepository.GetByIdAsync(detail.product_id, ct);
+                }
+                catch
+                {
+                    detail.product = null;
+                }
+            }
+
+            return Ok(details);
         }
 
         [HttpGet("{id:int}")]

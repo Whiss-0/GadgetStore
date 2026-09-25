@@ -1,3 +1,5 @@
+using api.ProductsModule;
+
 namespace api.OrderDetailModule
 {
     public class OrderDetail
@@ -8,5 +10,9 @@ namespace api.OrderDetailModule
         public int quantity { get; set; }
         public decimal price { get; set; }
         public decimal subtotal => quantity * price;
+
+        // Enriched by the controller/repository when fetching order details.
+        // Null when the product has been deleted; callers should show a fallback.
+        public Product? product { get; set; }
     }
 }

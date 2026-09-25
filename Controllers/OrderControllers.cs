@@ -194,12 +194,86 @@ namespace api.Controllers
             if (!deleted) return StatusCode(500, new { message = "Failed to delete order." });
             return NoContent();
         }
+
+        /// <summary>
+        /// Atomic checkout: creates the order + validates stock + inserts all line items in
+        /// a single SQLite transaction. If any item fails the order is fully rolled back.
+        /// </summary>
+        [HttpPost("checkout")]
+        public async Task<ActionResult<object>> Checkout([FromBody] CheckoutRequest dto, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            if (dto.Items == null || dto.Items.Count == 0)
+                return BadRequest(new { message = "At least one item is required to place an order." });
+
+            // Always use the authenticated user ID — never trust a client-supplied value.
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
+
+            // Card/GCash are simulated: mark payment_status as paid immediately.
+            // COD stays Unpaid until it's paid on delivery.
+            string paymentStatus = dto.PaymentMethod == "COD" ? "Unpaid" : "Paid (Simulated)";
+
+            var order = new Order
+            {
+                user_id          = userId,
+                order_date       = DateTime.UtcNow,
+                status           = "Pending",
+                total_amount     = dto.TotalAmount,
+                shipping_address = dto.ShippingAddress,
+                phone_number     = dto.PhoneNumber,
+                payment_method   = dto.PaymentMethod,
+                payment_status   = paymentStatus
+            };
+
+            var details = dto.Items.Select(i => new api.OrderDetailModule.OrderDetail
+            {
+                product_id = i.ProductId,
+                quantity   = i.Quantity,
+                price      = i.Price,
+            }).ToList();
+
+            int newOrderId;
+            try
+            {
+                newOrderId = await _orderRepository.CreateWithDetailsAsync(order, details, ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Stock validation failure — friendly 400 with the product message
+                return BadRequest(new { message = ex.Message });
+            }
+
+            // Record order placed activity (best-effort, non-blocking)
+            _ = TryLogAsync(new ActivityLog
+            {
+                User_ID          = userId,
+                Actor_User_ID    = userId,
+                Actor_Role       = "User",
+                Activity_Type    = "OrderPlaced",
+                Description      = $"Placed order #{newOrderId} via atomic checkout.",
+                Related_Order_ID = newOrderId,
+                Created_At       = DateTime.UtcNow,
+            });
+
+            // Best-effort confirmation email
+            var user = await _userRepository.GetByIdAsync(userId, ct);
+            if (user != null && !string.IsNullOrWhiteSpace(user.Email))
+            {
+                _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newOrderId, dto.TotalAmount, dto.PaymentMethod, ct);
+            }
+
+            return Ok(new { order_id = newOrderId, status = "Pending", total_amount = dto.TotalAmount });
+        }
+
         private async Task TryLogAsync(ActivityLog log)
         {
             try { await _activityRepository.CreateAsync(log); }
             catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
     }
+
 
     public class OrderRequest
     {
@@ -222,5 +296,40 @@ namespace api.Controllers
     public class OrderUpdateRequest
     {
         public string? Status { get; set; }
+    }
+
+    /// <summary>Request body for POST /api/order/checkout (atomic checkout endpoint).</summary>
+    public class CheckoutRequest
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public decimal TotalAmount { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.StringLength(300)]
+        public string ShippingAddress { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.Phone]
+        public string PhoneNumber { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.RegularExpression("^(COD|Card|GCash)$",
+            ErrorMessage = "PaymentMethod must be COD, Card, or GCash.")]
+        public string PaymentMethod { get; set; } = "COD";
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public List<CheckoutItemRequest>? Items { get; set; }
+    }
+
+    public class CheckoutItemRequest
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public int ProductId { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Range(1, int.MaxValue)]
+        public int Quantity { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Range(0, double.MaxValue)]
+        public decimal Price { get; set; }
     }
 }
