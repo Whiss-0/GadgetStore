@@ -72,11 +72,15 @@ namespace api.Controllers
 
             var user = new User
             {
-                Name = dto.Name,
-                Email = dto.Email,
-                Password = Security.PasswordHasher.Hash(dto.Password),
-                Address = dto.Address,
-                Role_ID = dto.Role_ID
+                Name              = dto.Name,
+                Email             = dto.Email,
+                Password          = Security.PasswordHasher.Hash(dto.Password),
+                Address           = dto.Address,
+                Region            = dto.Region,
+                Province          = dto.Province,
+                City_Municipality = dto.City_Municipality,
+                Barangay          = dto.Barangay,
+                Role_ID           = dto.Role_ID
             };
 
             int newId = await _userRepository.CreateAsync(user, ct);
@@ -93,10 +97,14 @@ namespace api.Controllers
             var existingUser = await _userRepository.GetByIdAsync(id, ct);
             if (existingUser == null) return NotFound(new { message = $"User with ID {id} was not found." });
 
-            existingUser.Name = dto.Name ?? existingUser.Name;
-            existingUser.Email = dto.Email ?? existingUser.Email;
-            existingUser.Address = dto.Address ?? existingUser.Address;
-            existingUser.Role_ID = dto.Role_ID ?? existingUser.Role_ID;
+            existingUser.Name              = dto.Name              ?? existingUser.Name;
+            existingUser.Email             = dto.Email             ?? existingUser.Email;
+            existingUser.Address           = dto.Address           ?? existingUser.Address;
+            existingUser.Region            = dto.Region            ?? existingUser.Region;
+            existingUser.Province          = dto.Province          ?? existingUser.Province;
+            existingUser.City_Municipality = dto.City_Municipality ?? existingUser.City_Municipality;
+            existingUser.Barangay          = dto.Barangay          ?? existingUser.Barangay;
+            existingUser.Role_ID           = dto.Role_ID           ?? existingUser.Role_ID;
             if (!string.IsNullOrWhiteSpace(dto.Password))
                 existingUser.Password = Security.PasswordHasher.Hash(dto.Password);
 
@@ -166,11 +174,15 @@ namespace api.Controllers
 
         private static UserResponse MapToDto(User user) => new UserResponse
         {
-            User_ID = user.User_ID,
-            Name = user.Name,
-            Email = user.Email,
-            Address = user.Address,
-            Role_ID = user.Role_ID
+            User_ID           = user.User_ID,
+            Name              = user.Name,
+            Email             = user.Email,
+            Address           = user.Address,
+            Region            = user.Region,
+            Province          = user.Province,
+            City_Municipality = user.City_Municipality,
+            Barangay          = user.Barangay,
+            Role_ID           = user.Role_ID
         };
 
         private async Task TryLogAsync(ActivityLog log)
@@ -192,6 +204,10 @@ namespace api.Controllers
         [System.ComponentModel.DataAnnotations.MinLength(6)]
         public string Password { get; set; } = string.Empty;
         public string? Address { get; set; }
+        public string? Region { get; set; }
+        public string? Province { get; set; }
+        public string? City_Municipality { get; set; }
+        public string? Barangay { get; set; }
         public int? Role_ID { get; set; }
     }
 
@@ -201,6 +217,10 @@ namespace api.Controllers
         public string? Email { get; set; }
         public string? Password { get; set; }
         public string? Address { get; set; }
+        public string? Region { get; set; }
+        public string? Province { get; set; }
+        public string? City_Municipality { get; set; }
+        public string? Barangay { get; set; }
         public int? Role_ID { get; set; }
     }
 }

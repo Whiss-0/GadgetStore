@@ -17,7 +17,7 @@ namespace api.UserModule
         public async Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
                 FROM users
                 WHERE name = @name LIMIT 1;";
 
@@ -30,7 +30,7 @@ namespace api.UserModule
         public async Task<User?> GetByEmailAsync(string email, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
                 FROM users
                 WHERE email = @email LIMIT 1;";
 
@@ -43,7 +43,7 @@ namespace api.UserModule
         public async Task<User?> GetByIdAsync(int id, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
                 FROM users
                 WHERE user_ID = @user_ID LIMIT 1;";
 
@@ -56,7 +56,7 @@ namespace api.UserModule
         public async Task<List<User>> GetAllAsync(CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
                 FROM users;";
 
             return await ExecuteReaderToListAsync(sql, MapUser, ct: ct);
@@ -73,7 +73,7 @@ namespace api.UserModule
             int totalCount = Convert.ToInt32(totalCountScalar);
 
             const string dataSql = @"
-                SELECT user_ID, name, email, password, address, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
                 FROM users
                 LIMIT @pageSize OFFSET @offset;";
 
@@ -100,17 +100,21 @@ namespace api.UserModule
             if (user is null) throw new ArgumentNullException(nameof(user));
 
             const string sql = @"
-                INSERT INTO users (name, email, password, address, Role_ID)
-                VALUES (@name, @email, @password, @address, @Role_ID);
+                INSERT INTO users (name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID)
+                VALUES (@name, @email, @password, @address, @Region, @Province, @City_Municipality, @Barangay, @Role_ID);
                 SELECT last_insert_rowid();";
 
             var parameters = new[]
             {
-                CreateParameter("@name",     user.Name),
-                CreateParameter("@email",    (object?)user.Email    ?? DBNull.Value),
-                CreateParameter("@password", user.Password),
-                CreateParameter("@address",  (object?)user.Address  ?? DBNull.Value),
-                CreateParameter("@Role_ID",  (object?)user.Role_ID  ?? DBNull.Value)
+                CreateParameter("@name",              user.Name),
+                CreateParameter("@email",             (object?)user.Email             ?? DBNull.Value),
+                CreateParameter("@password",          user.Password),
+                CreateParameter("@address",           (object?)user.Address           ?? DBNull.Value),
+                CreateParameter("@Region",            (object?)user.Region            ?? DBNull.Value),
+                CreateParameter("@Province",          (object?)user.Province          ?? DBNull.Value),
+                CreateParameter("@City_Municipality", (object?)user.City_Municipality ?? DBNull.Value),
+                CreateParameter("@Barangay",          (object?)user.Barangay          ?? DBNull.Value),
+                CreateParameter("@Role_ID",           (object?)user.Role_ID           ?? DBNull.Value)
             };
 
             var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
@@ -126,21 +130,29 @@ namespace api.UserModule
 
             const string sql = @"
                 UPDATE users
-                SET name     = @name,
-                    email    = @email,
-                    password = @password,
-                    address  = @address,
-                    Role_ID  = @Role_ID
+                SET name              = @name,
+                    email             = @email,
+                    password          = @password,
+                    address           = @address,
+                    Region            = @Region,
+                    Province          = @Province,
+                    City_Municipality = @City_Municipality,
+                    Barangay          = @Barangay,
+                    Role_ID           = @Role_ID
                 WHERE user_ID = @user_ID;";
 
             var parameters = new[]
             {
-                CreateParameter("@user_ID",  user.User_ID),
-                CreateParameter("@name",     user.Name),
-                CreateParameter("@email",    (object?)user.Email   ?? DBNull.Value),
-                CreateParameter("@password", user.Password),
-                CreateParameter("@address",  (object?)user.Address ?? DBNull.Value),
-                CreateParameter("@Role_ID",  (object?)user.Role_ID ?? DBNull.Value)
+                CreateParameter("@user_ID",           user.User_ID),
+                CreateParameter("@name",              user.Name),
+                CreateParameter("@email",             (object?)user.Email             ?? DBNull.Value),
+                CreateParameter("@password",          user.Password),
+                CreateParameter("@address",           (object?)user.Address           ?? DBNull.Value),
+                CreateParameter("@Region",            (object?)user.Region            ?? DBNull.Value),
+                CreateParameter("@Province",          (object?)user.Province          ?? DBNull.Value),
+                CreateParameter("@City_Municipality", (object?)user.City_Municipality ?? DBNull.Value),
+                CreateParameter("@Barangay",          (object?)user.Barangay          ?? DBNull.Value),
+                CreateParameter("@Role_ID",           (object?)user.Role_ID           ?? DBNull.Value)
             };
 
             int rowsAffected = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
@@ -177,17 +189,25 @@ namespace api.UserModule
         // ── Mapper ────────────────────────────────────────────────────────────
         private static User MapUser(DbDataReader reader)
         {
-            int roleIdOrdinal  = reader.GetOrdinal("Role_ID");
-            int addressOrdinal = reader.GetOrdinal("address");
+            int roleIdOrdinal           = reader.GetOrdinal("Role_ID");
+            int addressOrdinal          = reader.GetOrdinal("address");
+            int regionOrdinal           = reader.GetOrdinal("Region");
+            int provinceOrdinal         = reader.GetOrdinal("Province");
+            int cityMunicipalityOrdinal  = reader.GetOrdinal("City_Municipality");
+            int barangayOrdinal         = reader.GetOrdinal("Barangay");
 
             return new User
             {
-                User_ID  = ReadValue(reader, "user_ID",  0),
-                Name     = ReadValue(reader, "name",     string.Empty),
-                Email    = ReadValue(reader, "email",    string.Empty),
-                Password = ReadValue(reader, "password", string.Empty),
-                Address  = reader.IsDBNull(addressOrdinal) ? null : reader.GetString(addressOrdinal),
-                Role_ID  = reader.IsDBNull(roleIdOrdinal)  ? null : Convert.ToInt32(reader.GetValue(roleIdOrdinal))
+                User_ID           = ReadValue(reader, "user_ID",  0),
+                Name              = ReadValue(reader, "name",     string.Empty),
+                Email             = ReadValue(reader, "email",    string.Empty),
+                Password          = ReadValue(reader, "password", string.Empty),
+                Address           = reader.IsDBNull(addressOrdinal)         ? null : reader.GetString(addressOrdinal),
+                Region            = reader.IsDBNull(regionOrdinal)          ? null : reader.GetString(regionOrdinal),
+                Province          = reader.IsDBNull(provinceOrdinal)        ? null : reader.GetString(provinceOrdinal),
+                City_Municipality = reader.IsDBNull(cityMunicipalityOrdinal)? null : reader.GetString(cityMunicipalityOrdinal),
+                Barangay          = reader.IsDBNull(barangayOrdinal)        ? null : reader.GetString(barangayOrdinal),
+                Role_ID           = reader.IsDBNull(roleIdOrdinal)          ? null : Convert.ToInt32(reader.GetValue(roleIdOrdinal))
             };
         }
     }
