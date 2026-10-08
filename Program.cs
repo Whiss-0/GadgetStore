@@ -31,6 +31,15 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpClient("nominatim", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(8);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "GadgetStoreAPI/1.0 (+https://github.com/Whiss-0/GadgetStore)");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+});
+
 // Configure Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>

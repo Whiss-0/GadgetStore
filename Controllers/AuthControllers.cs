@@ -244,11 +244,15 @@ namespace api.Controllers
 
             return Ok(new
             {
-                userId   = user.User_ID,
-                username = user.Name,
-                email    = user.Email,
-                address  = user.Address,
-                roleId   = user.Role_ID
+                userId            = user.User_ID,
+                username          = user.Name,
+                email             = user.Email,
+                address           = user.Address,
+                region            = user.Region,
+                province          = user.Province,
+                city_Municipality = user.City_Municipality,
+                barangay          = user.Barangay,
+                roleId            = user.Role_ID
             });
         }
 
@@ -283,6 +287,21 @@ namespace api.Controllers
             user.Email = request.Email ?? user.Email;
             user.Address = request.Address ?? user.Address;
 
+            if (request.Region != null) user.Region = string.IsNullOrWhiteSpace(request.Region) ? null : request.Region;
+            if (request.Province != null) user.Province = string.IsNullOrWhiteSpace(request.Province) ? null : request.Province;
+            if (request.City_Municipality != null) user.City_Municipality = string.IsNullOrWhiteSpace(request.City_Municipality) ? null : request.City_Municipality;
+            if (request.Barangay != null) user.Barangay = string.IsNullOrWhiteSpace(request.Barangay) ? null : request.Barangay;
+
+            // If Region/Province/City were not explicitly provided, try to extract from formatted address
+            if (string.IsNullOrWhiteSpace(user.Region) && !string.IsNullOrWhiteSpace(user.Address))
+            {
+                TryExtractAddressParts(user.Address, out string? r, out string? p, out string? c, out string? b);
+                if (!string.IsNullOrWhiteSpace(r)) user.Region = r;
+                if (!string.IsNullOrWhiteSpace(p)) user.Province = p;
+                if (!string.IsNullOrWhiteSpace(c)) user.City_Municipality = c;
+                if (!string.IsNullOrWhiteSpace(b)) user.Barangay = b;
+            }
+
             bool updated = await _userRepository.UpdateAsync(user, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update profile." });
 
@@ -303,6 +322,48 @@ namespace api.Controllers
         }
 
         // ---- Private helpers ----
+
+        private static void TryExtractAddressParts(string fullAddress, out string? region, out string? province, out string? city, out string? barangay)
+        {
+            region = null;
+            province = null;
+            city = null;
+            barangay = null;
+
+            if (string.IsNullOrWhiteSpace(fullAddress)) return;
+
+            var parts = fullAddress.Split(',')
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToArray();
+
+            if (parts.Length >= 4)
+            {
+                if (parts[^1].Equals("Philippines", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (parts.Length >= 5)
+                    {
+                        region = parts[^2];
+                        province = parts[^3];
+                        city = parts[^4];
+                        barangay = parts.Length >= 5 ? parts[^5] : null;
+                    }
+                }
+                else
+                {
+                    region = parts[^1];
+                    province = parts[^2];
+                    city = parts[^3];
+                    barangay = parts.Length >= 4 ? parts[^4] : null;
+                }
+            }
+            else if (fullAddress.IndexOf("olongapo", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                region = "Region III (Central Luzon)";
+                province = "Zambales";
+                city = "Olongapo City";
+            }
+        }
 
         private static string RoleLabel(int? roleId) => roleId switch
         {
@@ -330,6 +391,10 @@ namespace api.Controllers
         public string? Name { get; set; }
         public string? Email { get; set; }
         public string? Address { get; set; }
+        public string? Region { get; set; }
+        public string? Province { get; set; }
+        public string? City_Municipality { get; set; }
+        public string? Barangay { get; set; }
         public string? Password { get; set; }
         public string? CurrentPassword { get; set; }
     }
