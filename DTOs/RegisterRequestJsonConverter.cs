@@ -68,7 +68,7 @@ namespace api.DTOs
         public override void Write(Utf8JsonWriter writer, RegisterRequest value, JsonSerializerOptions options)
         {
             writer.WriteStartObject();
-            writer.WriteString("username", value.Username);     
+            writer.WriteString("username", value.Username);
             writer.WriteString("password", value.Password);
             writer.WriteString("email", value.Email);
             writer.WriteEndObject();

@@ -107,9 +107,55 @@ namespace api.OrderModule
             if (details is null || details.Count == 0)
                 throw new ArgumentException("At least one order item is required.", nameof(details));
 
+            // Merge duplicate product IDs before entering the transaction to avoid
+            // double stock decrements on the same product.
+            var mergedDetails = details
+                .GroupBy(d => d.product_id)
+                .Select(g => new api.OrderDetailModule.OrderDetail
+                {
+                    product_id = g.Key,
+                    quantity   = g.Sum(d => d.quantity),
+                    price      = 0m, // will be overwritten by DB price below
+                })
+                .ToList();
+
             return await WithTransactionAsync(async (conn, tx) =>
             {
-                // 1. Insert the order
+                // 1. Validate every item, read DB prices, calculate authoritative total.
+                decimal authoritativeTotal = 0m;
+                var pricedDetails = new List<(int productId, int quantity, decimal dbPrice)>();
+
+                foreach (var detail in mergedDetails)
+                {
+                    if (detail.quantity < 1)
+                        throw new InvalidOperationException($"Quantity for product {detail.product_id} must be at least 1.");
+
+                    // Read current price and stock from the database — never trust the client.
+                    const string productSql = "SELECT price, stock FROM products WHERE product_id = @pid LIMIT 1;";
+                    var productParams = new[] { CreateParameter("@pid", detail.product_id) };
+
+                    var productRows = await ExecuteReaderToListAsync(
+                        conn, tx, productSql,
+                        reader => (
+                            dbPrice: ReadValue(reader, "price", 0m),
+                            stock:   ReadValue(reader, "stock", -1)
+                        ),
+                        productParams, ct: ct);
+
+                    if (productRows.Count == 0)
+                        throw new InvalidOperationException($"Product {detail.product_id} does not exist.");
+
+                    var (dbPrice, stock) = productRows[0];
+
+                    if (stock < detail.quantity)
+                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
+
+                    authoritativeTotal = checked(authoritativeTotal + dbPrice * detail.quantity);
+                    pricedDetails.Add((detail.product_id, detail.quantity, dbPrice));
+                }
+
+                // 2. Insert the order using the authoritative total calculated above.
+
                 const string insertOrder = @"
                     INSERT INTO orders (user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status)
                     VALUES (@user_id, @order_date, @total_amount, @status, @shipping_address, @phone_number, @payment_method, @payment_status);
@@ -119,7 +165,7 @@ namespace api.OrderModule
                 {
                     CreateParameter("@user_id", order.user_id),
                     CreateParameter("@order_date", order.order_date.ToString("yyyy-MM-dd HH:mm:ss")),
-                    CreateParameter("@total_amount", order.total_amount),
+                    CreateParameter("@total_amount", authoritativeTotal),   // DB-calculated, not client value
                     CreateParameter("@status", order.status),
                     CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
                     CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
@@ -129,46 +175,33 @@ namespace api.OrderModule
 
                 var newIdScalar = await ExecuteScalarAsync<long>(conn, tx, insertOrder, orderParams, ct: ct);
                 int newOrderId = Convert.ToInt32(newIdScalar);
-                order.order_id = newOrderId;
+                order.order_id      = newOrderId;
+                order.total_amount  = authoritativeTotal;
 
-                // 2. For each line item: validate stock, decrement, insert detail
-                foreach (var detail in details)
+                // 3. Decrement stock and insert detail lines using DB prices.
+                foreach (var (productId, quantity, dbPrice) in pricedDetails)
                 {
-                    // Check product exists and has sufficient stock
-                    const string stockSql = "SELECT stock FROM products WHERE product_id = @pid LIMIT 1;";
-                    var stockParams = new[] { CreateParameter("@pid", detail.product_id) };
-                    var stockRaw = await ExecuteScalarAsync<object>(conn, tx, stockSql, stockParams, ct: ct);
-
-                    if (stockRaw is null || stockRaw is DBNull)
-                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
-
-                    int stock = Convert.ToInt32(stockRaw);
-                    if (stock < detail.quantity)
-                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
-
-                    // Decrement stock atomically within the transaction
                     const string decrementSql = @"
                         UPDATE products SET stock = stock - @qty
                         WHERE product_id = @pid AND stock >= @qty;";
                     var decrParams = new[]
                     {
-                        CreateParameter("@qty", detail.quantity),
-                        CreateParameter("@pid", detail.product_id),
+                        CreateParameter("@qty", quantity),
+                        CreateParameter("@pid", productId),
                     };
                     int affected = await ExecuteNonQueryAsync(conn, tx, decrementSql, decrParams, ct: ct);
                     if (affected == 0)
-                        throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
+                        throw new InvalidOperationException($"Product {productId} is out of stock or has insufficient stock.");
 
-                    // Insert the order detail line
                     const string insertDetail = @"
                         INSERT INTO order_details (order_id, product_id, quantity, price)
                         VALUES (@order_id, @product_id, @quantity, @price);";
                     var detailParams = new[]
                     {
-                        CreateParameter("@order_id", newOrderId),
-                        CreateParameter("@product_id", detail.product_id),
-                        CreateParameter("@quantity", detail.quantity),
-                        CreateParameter("@price", detail.price),
+                        CreateParameter("@order_id",   newOrderId),
+                        CreateParameter("@product_id", productId),
+                        CreateParameter("@quantity",   quantity),
+                        CreateParameter("@price",      dbPrice),   // DB price, not client price
                     };
                     await ExecuteNonQueryAsync(conn, tx, insertDetail, detailParams, ct: ct);
                 }
@@ -204,4 +237,3 @@ namespace api.OrderModule
         }
     }
 }
-

@@ -155,13 +155,40 @@ namespace api.Controllers
             return NoContent();
         }
 
+        private static readonly HashSet<string> AllowedStatuses =
+            new(StringComparer.Ordinal) { "Pending", "Processing", "Shipped", "Delivered", "Cancelled" };
+
+        private static readonly Dictionary<string, HashSet<string>> AllowedTransitions =
+            new(StringComparer.Ordinal)
+            {
+                ["Pending"]    = new(StringComparer.Ordinal) { "Processing", "Cancelled" },
+                ["Processing"] = new(StringComparer.Ordinal) { "Shipped",    "Cancelled" },
+                ["Shipped"]    = new(StringComparer.Ordinal) { "Delivered" },
+                ["Delivered"]  = new(StringComparer.Ordinal),
+                ["Cancelled"]  = new(StringComparer.Ordinal),
+            };
+
         [Authorize(Policy = "ModAccess")]
         [HttpPut("{id:int}")]
         public async Task<IActionResult> Update(int id, [FromBody] OrderUpdateRequest dto, CancellationToken ct)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            if (dto.Status != null)
+            {
+                if (!AllowedStatuses.Contains(dto.Status))
+                    return BadRequest(new { message = $"'{dto.Status}' is not a valid order status. Allowed values: Pending, Processing, Shipped, Delivered, Cancelled." });
+            }
+
             var existing = await _orderRepository.GetByIdAsync(id, ct);
             if (existing == null) return NotFound(new { message = $"Order with ID {id} not found." });
+
+            if (dto.Status != null && dto.Status != existing.status)
+            {
+                if (!AllowedTransitions.TryGetValue(existing.status, out var allowed) || !allowed.Contains(dto.Status))
+                    return BadRequest(new { message = $"Cannot transition order from '{existing.status}' to '{dto.Status}'." });
+            }
+
             existing.status = dto.Status ?? existing.status;
             bool updated = await _orderRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update order." });
@@ -261,10 +288,11 @@ namespace api.Controllers
             var user = await _userRepository.GetByIdAsync(userId, ct);
             if (user != null && !string.IsNullOrWhiteSpace(user.Email))
             {
-                _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newOrderId, dto.TotalAmount, dto.PaymentMethod, ct);
+                _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newOrderId, order.total_amount, dto.PaymentMethod, ct);
             }
 
-            return Ok(new { order_id = newOrderId, status = "Pending", total_amount = dto.TotalAmount });
+            // Return the authoritative total calculated from DB prices, not the client-supplied value.
+            return Ok(new { order_id = newOrderId, status = "Pending", total_amount = order.total_amount });
         }
 
         private async Task TryLogAsync(ActivityLog log)

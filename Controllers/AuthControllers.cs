@@ -126,12 +126,12 @@ namespace api.Controllers
                 Created_At    = DateTime.UtcNow,
             });
 
-            return Ok(new { 
-                token, 
+            return Ok(new {
+                token,
                 tokenType = "Bearer",
                 userId = user.User_ID,
                 username = user.Name,
-                roleId = user.Role_ID 
+                roleId = user.Role_ID
             });
         }
 
