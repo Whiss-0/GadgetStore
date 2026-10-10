@@ -18,7 +18,7 @@ namespace api.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Policy = "AdminAccess")]
+    [Authorize(Policy = "ModAccess")]
     public class GeocodeController : ControllerBase
     {
         // ── Shared static cache + rate-limit gate ─────────────────────────────

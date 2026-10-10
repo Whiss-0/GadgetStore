@@ -33,7 +33,7 @@ namespace api.Controllers
             _logger = logger;
         }
 
-        [Authorize(Policy = "AdminAccess")]
+        [Authorize(Policy = "ModAccess")]
         [HttpGet]
         public async Task<ActionResult<object>> GetAll([FromQuery] int? pageNumber, [FromQuery] int? pageSize, CancellationToken ct)
         {
@@ -42,7 +42,7 @@ namespace api.Controllers
             return Ok(await _orderRepository.GetAllAsync(ct));
         }
 
-        [Authorize(Policy = "AdminAccess")]
+        [Authorize(Policy = "ModAccess")]
         [HttpGet("user/{userId:int}")]
         public async Task<ActionResult<List<Order>>> GetByUser(int userId, CancellationToken ct)
         {

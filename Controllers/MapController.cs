@@ -9,7 +9,7 @@ namespace api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "AdminAccess")]
+[Authorize(Policy = "ModAccess")]
 public sealed class MapController : ControllerBase
 {
     private static readonly SemaphoreSlim NominatimRequestGate = new(1, 1);
