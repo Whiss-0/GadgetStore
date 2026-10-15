@@ -5,6 +5,7 @@ using api.OrderModule;
 using api.UserModule;
 using api.Security;
 using api.ActivityModule;
+using api.Services;
 
 namespace api.Controllers
 {
@@ -18,19 +19,22 @@ namespace api.Controllers
         private readonly IOrderEmailSender _orderEmailSender;
         private readonly IActivityRepository _activityRepository;
         private readonly ILogger<OrderController> _logger;
+        private readonly INotificationService _notificationService;
 
         public OrderController(
             IOrderRepository orderRepository,
             IUserRepository userRepository,
             IOrderEmailSender orderEmailSender,
             IActivityRepository activityRepository,
-            ILogger<OrderController> logger)
+            ILogger<OrderController> logger,
+            INotificationService notificationService)
         {
             _orderRepository = orderRepository;
             _userRepository = userRepository;
             _orderEmailSender = orderEmailSender;
             _activityRepository = activityRepository;
             _logger = logger;
+            _notificationService = notificationService;
         }
 
         [Authorize(Policy = "ModAccess")]
@@ -136,9 +140,12 @@ namespace api.Controllers
             if (order.status != "Pending")
                 return BadRequest(new { message = $"Can't cancel an order that's already '{order.status}'. Contact support instead." });
 
+            string previousStatus = order.status;
             order.status = "Cancelled";
             bool updated = await _orderRepository.UpdateAsync(order, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to cancel order." });
+
+            _ = _notificationService.CreateOrderStatusNotificationAsync(order, previousStatus, ct);
 
             // Record order cancelled
             _ = TryLogAsync(new ActivityLog
@@ -189,9 +196,12 @@ namespace api.Controllers
                     return BadRequest(new { message = $"Cannot transition order from '{existing.status}' to '{dto.Status}'." });
             }
 
+            string previousStatus = existing.status;
             existing.status = dto.Status ?? existing.status;
             bool updated = await _orderRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update order." });
+
+            _ = _notificationService.CreateOrderStatusNotificationAsync(existing, previousStatus, ct);
 
             // Record status change — actor may be staff or admin
             var actorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
