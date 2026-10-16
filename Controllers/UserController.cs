@@ -80,6 +80,7 @@ namespace api.Controllers
                 Province          = dto.Province,
                 City_Municipality = dto.City_Municipality,
                 Barangay          = dto.Barangay,
+                ProfileImageUrl   = null,
                 Role_ID           = dto.Role_ID
             };
 
@@ -182,6 +183,7 @@ namespace api.Controllers
             Province          = user.Province,
             City_Municipality = user.City_Municipality,
             Barangay          = user.Barangay,
+            ProfileImageUrl   = user.ProfileImageUrl,
             Role_ID           = user.Role_ID
         };
 

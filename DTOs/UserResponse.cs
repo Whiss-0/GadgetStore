@@ -10,6 +10,7 @@ namespace api.DTOs
         public string? Province { get; set; }
         public string? City_Municipality { get; set; }
         public string? Barangay { get; set; }
+        public string? ProfileImageUrl { get; set; }
         public int? Role_ID { get; set; }
     }
 }

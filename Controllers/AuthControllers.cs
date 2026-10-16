@@ -252,6 +252,7 @@ namespace api.Controllers
                 province          = user.Province,
                 city_Municipality = user.City_Municipality,
                 barangay          = user.Barangay,
+                profileImageUrl   = user.ProfileImageUrl,
                 roleId            = user.Role_ID
             });
         }
@@ -319,6 +320,133 @@ namespace api.Controllers
             });
 
             return Ok(new { message = "Profile updated successfully." });
+        }
+
+        /// <summary>Upload or replace the profile picture for the authenticated account.</summary>
+        [Authorize(Policy = "UserAccess")]
+        [HttpPost("me/profile-image")]
+        [Consumes("multipart/form-data")]
+        [RequestSizeLimit((2 * 1024 * 1024) + (64 * 1024))]
+        public async Task<IActionResult> UploadProfileImage([FromForm] ProfileImageUploadRequest request, CancellationToken ct)
+        {
+            var file = request.File;
+            if (!int.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out int userId))
+                return Unauthorized();
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Choose an image file to upload." });
+            if (file.Length > 2 * 1024 * 1024)
+                return BadRequest(new { message = "Profile images must be 2 MB or smaller." });
+
+            string extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
+                return BadRequest(new { message = "Use a JPG, PNG, or WebP image." });
+
+            byte[] header = new byte[12];
+            int headerLength = 0;
+            await using (var input = file.OpenReadStream())
+            {
+                while (headerLength < header.Length)
+                {
+                    int read = await input.ReadAsync(header.AsMemory(headerLength), ct);
+                    if (read == 0) break;
+                    headerLength += read;
+                }
+            }
+            if (!IsSupportedImageSignature(header, headerLength, extension))
+                return BadRequest(new { message = "That file does not appear to be a valid JPG, PNG, or WebP image." });
+
+            var user = await _userRepository.GetByIdAsync(userId, ct);
+            if (user == null) return NotFound();
+
+            string fileName = $"{Guid.NewGuid():N}{extension}";
+            string uploadDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "uploads", "profiles");
+            Directory.CreateDirectory(uploadDirectory);
+            string filePath = Path.Combine(uploadDirectory, fileName);
+            await using (var output = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            await using (var input = file.OpenReadStream())
+                await input.CopyToAsync(output, ct);
+
+            string profileImageUrl = $"/uploads/profiles/{fileName}";
+            bool updated;
+            try
+            {
+                updated = await _userRepository.UpdateProfileImageAsync(userId, profileImageUrl, ct);
+            }
+            catch
+            {
+                TryDeleteProfileImageFile(profileImageUrl);
+                throw;
+            }
+            if (!updated)
+            {
+                TryDeleteProfileImageFile(profileImageUrl);
+                return StatusCode(500, new { message = "Could not save the profile image." });
+            }
+
+            TryDeleteProfileImageFile(user.ProfileImageUrl);
+            _ = TryLogActivityAsync(new ActivityLog
+            {
+                User_ID = userId,
+                Actor_User_ID = userId,
+                Actor_Role = RoleLabel(user.Role_ID),
+                Activity_Type = "ProfileImageUploaded",
+                Description = "Updated the account profile picture.",
+                Created_At = DateTime.UtcNow,
+            });
+            return Ok(new { profileImageUrl });
+        }
+
+        /// <summary>Remove the profile picture for the authenticated account.</summary>
+        [Authorize(Policy = "UserAccess")]
+        [HttpDelete("me/profile-image")]
+        public async Task<IActionResult> DeleteProfileImage(CancellationToken ct)
+        {
+            if (!int.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out int userId))
+                return Unauthorized();
+
+            var user = await _userRepository.GetByIdAsync(userId, ct);
+            if (user == null) return NotFound();
+            if (string.IsNullOrWhiteSpace(user.ProfileImageUrl)) return NoContent();
+
+            bool updated = await _userRepository.UpdateProfileImageAsync(userId, null, ct);
+            if (!updated) return StatusCode(500, new { message = "Could not remove the profile image." });
+
+            TryDeleteProfileImageFile(user.ProfileImageUrl);
+            _ = TryLogActivityAsync(new ActivityLog
+            {
+                User_ID = userId,
+                Actor_User_ID = userId,
+                Actor_Role = RoleLabel(user.Role_ID),
+                Activity_Type = "ProfileImageRemoved",
+                Description = "Removed the account profile picture.",
+                Created_At = DateTime.UtcNow,
+            });
+            return NoContent();
+        }
+
+        private static bool IsSupportedImageSignature(byte[] header, int length, string extension) => extension switch
+        {
+            ".jpg" or ".jpeg" => length >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            ".png" => length >= 8 && header.AsSpan(0, 8).SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }),
+            ".webp" => length >= 12 && header.AsSpan(0, 4).SequenceEqual("RIFF"u8) && header.AsSpan(8, 4).SequenceEqual("WEBP"u8),
+            _ => false
+        };
+
+        private void TryDeleteProfileImageFile(string? storedUrl)
+        {
+            const string allowedPrefix = "/uploads/profiles/";
+            if (string.IsNullOrWhiteSpace(storedUrl) || !storedUrl.StartsWith(allowedPrefix, StringComparison.Ordinal)) return;
+            string fileName = Path.GetFileName(storedUrl);
+            if (string.IsNullOrWhiteSpace(fileName) || fileName != storedUrl[allowedPrefix.Length..]) return;
+            try
+            {
+                string filePath = Path.Combine(_environment.ContentRootPath, "wwwroot", "uploads", "profiles", fileName);
+                if (System.IO.File.Exists(filePath)) System.IO.File.Delete(filePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not remove old profile image {FileName}", fileName);
+            }
         }
 
         // ---- Private helpers ----
@@ -397,5 +525,12 @@ namespace api.Controllers
         public string? Barangay { get; set; }
         public string? Password { get; set; }
         public string? CurrentPassword { get; set; }
+    }
+
+    /// <summary>Wrapper DTO so Swashbuckle 9.x can generate the multipart/form-data schema for file uploads.</summary>
+    public class ProfileImageUploadRequest
+    {
+        /// <summary>The image file to upload (JPG, PNG, or WebP, max 2 MB).</summary>
+        public IFormFile? File { get; set; }
     }
 }

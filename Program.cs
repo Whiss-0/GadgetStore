@@ -20,6 +20,7 @@ using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using Swashbuckle.AspNetCore.SwaggerGen;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddInMemoryCollection(ConnEnvFile.LoadConfigurationValues());
@@ -69,6 +70,17 @@ builder.Services.AddSwaggerGen(c =>
             "Bearer A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A7B8C"
         )
     }
+    });
+
+    // Fix: IFormFile with [FromForm] requires an explicit OperationFilter in Swashbuckle 9.x
+    c.OperationFilter<FormFileOperationFilter>();
+
+    // Fix: Swashbuckle 9.x cannot introspect IFormFile directly — map it to a binary schema
+    c.MapType<IFormFile>(() => new OpenApiSchema { Type = "string", Format = "binary" });
+    c.MapType<IFormFileCollection>(() => new OpenApiSchema
+    {
+        Type = "array",
+        Items = new OpenApiSchema { Type = "string", Format = "binary" }
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -313,3 +325,53 @@ app.MapGet("/dev/schema", async (MyCon db) =>
 app.Run();
 
 public partial class Program { }
+
+/// <summary>
+/// Rewrites IFormFile / IFormFileCollection parameters into a proper
+/// multipart/form-data request body so Swashbuckle 9.x can generate
+/// swagger.json without throwing an InternalServerError.
+/// </summary>
+internal sealed class FormFileOperationFilter : IOperationFilter
+{
+    public void Apply(OpenApiOperation operation, OperationFilterContext context)
+    {
+        var formFileParams = context.ApiDescription.ActionDescriptor.Parameters
+            .Where(p => p.ParameterType == typeof(IFormFile) || p.ParameterType == typeof(IFormFileCollection))
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (formFileParams.Count == 0) return;
+
+        // Remove any auto-detected parameters that Swashbuckle couldn't resolve
+        operation.Parameters = operation.Parameters
+            .Where(p => !formFileParams.Contains(p.Name))
+            .ToList();
+
+        var properties = new Dictionary<string, OpenApiSchema>();
+        foreach (var name in formFileParams)
+        {
+            properties[name] = new OpenApiSchema
+            {
+                Type = "string",
+                Format = "binary",
+                Description = "File to upload"
+            };
+        }
+
+        operation.RequestBody = new OpenApiRequestBody
+        {
+            Required = true,
+            Content =
+            {
+                ["multipart/form-data"] = new OpenApiMediaType
+                {
+                    Schema = new OpenApiSchema
+                    {
+                        Type = "object",
+                        Properties = properties
+                    }
+                }
+            }
+        };
+    }
+}

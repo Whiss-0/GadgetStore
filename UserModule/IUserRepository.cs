@@ -14,6 +14,7 @@ namespace api.UserModule
         Task<PaginationModel<User>> GetPagedAsync(int pageNumber, int pageSize, CancellationToken ct = default);
         Task<int> CreateAsync(User user, CancellationToken ct = default);
         Task<bool> UpdateAsync(User user, CancellationToken ct = default);
+        Task<bool> UpdateProfileImageAsync(int userId, string? profileImageUrl, CancellationToken ct = default);
         Task<bool> UpdatePasswordAsync(int userId, string newPasswordHash, CancellationToken ct = default);
         Task<bool> DeleteAsync(int id, CancellationToken ct = default);
     }

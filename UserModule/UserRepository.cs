@@ -17,7 +17,7 @@ namespace api.UserModule
         public async Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, ProfileImageUrl, Role_ID
                 FROM users
                 WHERE name = @name LIMIT 1;";
 
@@ -30,7 +30,7 @@ namespace api.UserModule
         public async Task<User?> GetByEmailAsync(string email, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, ProfileImageUrl, Role_ID
                 FROM users
                 WHERE email = @email LIMIT 1;";
 
@@ -43,7 +43,7 @@ namespace api.UserModule
         public async Task<User?> GetByIdAsync(int id, CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, ProfileImageUrl, Role_ID
                 FROM users
                 WHERE user_ID = @user_ID LIMIT 1;";
 
@@ -56,7 +56,7 @@ namespace api.UserModule
         public async Task<List<User>> GetAllAsync(CancellationToken ct = default)
         {
             const string sql = @"
-                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, ProfileImageUrl, Role_ID
                 FROM users;";
 
             return await ExecuteReaderToListAsync(sql, MapUser, ct: ct);
@@ -73,7 +73,7 @@ namespace api.UserModule
             int totalCount = Convert.ToInt32(totalCountScalar);
 
             const string dataSql = @"
-                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, Role_ID
+                SELECT user_ID, name, email, password, address, Region, Province, City_Municipality, Barangay, ProfileImageUrl, Role_ID
                 FROM users
                 LIMIT @pageSize OFFSET @offset;";
 
@@ -138,6 +138,7 @@ namespace api.UserModule
                     Province          = @Province,
                     City_Municipality = @City_Municipality,
                     Barangay          = @Barangay,
+                    ProfileImageUrl   = @ProfileImageUrl,
                     Role_ID           = @Role_ID
                 WHERE user_ID = @user_ID;";
 
@@ -152,9 +153,22 @@ namespace api.UserModule
                 CreateParameter("@Province",          (object?)user.Province          ?? DBNull.Value),
                 CreateParameter("@City_Municipality", (object?)user.City_Municipality ?? DBNull.Value),
                 CreateParameter("@Barangay",          (object?)user.Barangay          ?? DBNull.Value),
+                CreateParameter("@ProfileImageUrl",    (object?)user.ProfileImageUrl    ?? DBNull.Value),
                 CreateParameter("@Role_ID",           (object?)user.Role_ID           ?? DBNull.Value)
             };
 
+            int rowsAffected = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
+            return rowsAffected > 0;
+        }
+
+        public async Task<bool> UpdateProfileImageAsync(int userId, string? profileImageUrl, CancellationToken ct = default)
+        {
+            const string sql = "UPDATE users SET ProfileImageUrl = @ProfileImageUrl WHERE user_ID = @user_ID;";
+            var parameters = new[]
+            {
+                CreateParameter("@user_ID", userId),
+                CreateParameter("@ProfileImageUrl", (object?)profileImageUrl ?? DBNull.Value)
+            };
             int rowsAffected = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
             return rowsAffected > 0;
         }
@@ -195,6 +209,7 @@ namespace api.UserModule
             int provinceOrdinal         = reader.GetOrdinal("Province");
             int cityMunicipalityOrdinal  = reader.GetOrdinal("City_Municipality");
             int barangayOrdinal         = reader.GetOrdinal("Barangay");
+            int profileImageOrdinal     = reader.GetOrdinal("ProfileImageUrl");
 
             return new User
             {
@@ -207,6 +222,7 @@ namespace api.UserModule
                 Province          = reader.IsDBNull(provinceOrdinal)        ? null : reader.GetString(provinceOrdinal),
                 City_Municipality = reader.IsDBNull(cityMunicipalityOrdinal)? null : reader.GetString(cityMunicipalityOrdinal),
                 Barangay          = reader.IsDBNull(barangayOrdinal)        ? null : reader.GetString(barangayOrdinal),
+                ProfileImageUrl   = reader.IsDBNull(profileImageOrdinal)    ? null : reader.GetString(profileImageOrdinal),
                 Role_ID           = reader.IsDBNull(roleIdOrdinal)          ? null : Convert.ToInt32(reader.GetValue(roleIdOrdinal))
             };
         }
