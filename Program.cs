@@ -13,6 +13,7 @@ using api.WishlistModule;
 using api.Services;
 using api.ActivityModule;
 using api.NotificationModule;
+using api.ContactModule;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Any;
@@ -146,6 +147,7 @@ builder.Services.AddScoped<IWishlistRepository, WishlistRepository>();
 builder.Services.AddScoped<IActivityRepository, ActivityRepository>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IContactMessageRepository, ContactMessageRepository>();
 
 // Register JWT Token Service
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -209,6 +211,17 @@ builder.Services.AddRateLimiter(options =>
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
+
+    options.AddPolicy("contact-submit", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(15),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
 });
 
 var app = builder.Build();

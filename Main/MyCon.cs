@@ -89,7 +89,8 @@ namespace api.Main
 
             var b = new SqliteConnectionStringBuilder
             {
-                DataSource = ResolveDataSource(config.filePath)
+                DataSource = ResolveDataSource(config.filePath),
+                ForeignKeys = true
             };
             if (config.protectedSqlite)
             {
