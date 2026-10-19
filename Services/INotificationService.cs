@@ -5,4 +5,5 @@ namespace api.Services;
 public interface INotificationService
 {
     Task CreateOrderStatusNotificationAsync(Order order, string previousStatus, CancellationToken ct = default);
+    Task CreateTrackingUpdateNotificationAsync(Order order, CancellationToken ct = default);
 }

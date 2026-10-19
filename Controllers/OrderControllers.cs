@@ -75,6 +75,51 @@ namespace api.Controllers
             return Ok(order);
         }
 
+        [HttpGet("{id:int}/delivery-events")]
+        public async Task<ActionResult<List<OrderDeliveryEvent>>> GetDeliveryEvents(int id, CancellationToken ct)
+        {
+            var order = await _orderRepository.GetByIdAsync(id, ct);
+            if (order == null) return NotFound(new { message = $"Order with ID {id} not found." });
+
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
+            if (order.user_id != userId && !User.HasClaim("user_role_id", "1") && !User.HasClaim("user_role_id", "2"))
+                return Forbid();
+
+            return Ok(await _orderRepository.GetDeliveryEventsAsync(id, ct));
+        }
+
+        [Authorize(Policy = "ModAccess")]
+        [HttpPut("{id:int}/fulfillment")]
+        public async Task<IActionResult> UpdateFulfillment(int id, [FromBody] FulfillmentUpdateRequest dto, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var order = await _orderRepository.GetByIdAsync(id, ct);
+            if (order == null) return NotFound(new { message = $"Order with ID {id} not found." });
+
+            string? courierName = NormalizeOptional(dto.CourierName);
+            string? trackingNumber = NormalizeOptional(dto.TrackingNumber);
+            string? eta = NormalizeOptional(dto.EstimatedDeliveryDate);
+            if (eta != null && !DateTime.TryParseExact(eta, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out _))
+                return BadRequest(new { message = "EstimatedDeliveryDate must be YYYY-MM-DD, null, or empty." });
+
+            bool detailsChanged = !string.Equals(order.courier_name, courierName, StringComparison.Ordinal)
+                || !string.Equals(order.tracking_number, trackingNumber, StringComparison.Ordinal)
+                || !string.Equals(order.estimated_delivery_date, eta, StringComparison.Ordinal);
+            order.courier_name = courierName;
+            order.tracking_number = trackingNumber;
+            order.estimated_delivery_date = eta;
+
+            string actorRole = GetActorRole();
+            bool updated = await _orderRepository.UpdateFulfillmentWithEventAsync(order, actorRole, NormalizeOptional(dto.Note), ct);
+            if (!updated) return StatusCode(500, new { message = "Failed to update fulfillment details." });
+            if (detailsChanged) await _notificationService.CreateTrackingUpdateNotificationAsync(order, ct);
+
+            return NoContent();
+        }
+
         [HttpPost]
         public async Task<ActionResult<Order>> Create([FromBody] OrderRequest dto, CancellationToken ct)
         {
@@ -141,9 +186,9 @@ namespace api.Controllers
                 return BadRequest(new { message = $"Can't cancel an order that's already '{order.status}'. Contact support instead." });
 
             string previousStatus = order.status;
+            bool updated = await _orderRepository.UpdateStatusWithEventAsync(id, previousStatus, "Cancelled", "User", "Order cancelled by customer.", ct);
+            if (!updated) return Conflict(new { message = "Order status changed before cancellation could be saved." });
             order.status = "Cancelled";
-            bool updated = await _orderRepository.UpdateAsync(order, ct);
-            if (!updated) return StatusCode(500, new { message = "Failed to cancel order." });
 
             _ = _notificationService.CreateOrderStatusNotificationAsync(order, previousStatus, ct);
 
@@ -197,16 +242,27 @@ namespace api.Controllers
             }
 
             string previousStatus = existing.status;
-            existing.status = dto.Status ?? existing.status;
-            bool updated = await _orderRepository.UpdateAsync(existing, ct);
-            if (!updated) return StatusCode(500, new { message = "Failed to update order." });
+            string targetStatus = dto.Status ?? existing.status;
+            string actorRole = GetActorRole();
+            bool updated;
+            if (targetStatus != previousStatus)
+            {
+                string note = $"Status changed from {previousStatus} to {targetStatus}.";
+                updated = await _orderRepository.UpdateStatusWithEventAsync(id, previousStatus, targetStatus, actorRole, note, ct);
+                if (!updated) return Conflict(new { message = "Order status changed before the update could be saved." });
+                existing.status = targetStatus;
+            }
+            else
+            {
+                updated = await _orderRepository.UpdateAsync(existing, ct);
+                if (!updated) return StatusCode(500, new { message = "Failed to update order." });
+            }
 
             _ = _notificationService.CreateOrderStatusNotificationAsync(existing, previousStatus, ct);
 
             // Record status change — actor may be staff or admin
             var actorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             int.TryParse(actorIdClaim, out int actorId);
-            string actorRole = User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
             _ = TryLogAsync(new ActivityLog
             {
                 User_ID          = existing.user_id,
@@ -310,8 +366,25 @@ namespace api.Controllers
             try { await _activityRepository.CreateAsync(log); }
             catch (Exception ex) { _logger.LogWarning(ex, "Activity log write failed ({Type})", log.Activity_Type); }
         }
+
+        private string GetActorRole() => User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
+        private static string? NormalizeOptional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
+    public class FulfillmentUpdateRequest
+    {
+        [System.ComponentModel.DataAnnotations.StringLength(100)]
+        public string? CourierName { get; set; }
+
+        [System.ComponentModel.DataAnnotations.StringLength(100)]
+        public string? TrackingNumber { get; set; }
+
+        [System.ComponentModel.DataAnnotations.StringLength(10)]
+        public string? EstimatedDeliveryDate { get; set; }
+
+        [System.ComponentModel.DataAnnotations.StringLength(1000)]
+        public string? Note { get; set; }
+    }
 
     public class OrderRequest
     {

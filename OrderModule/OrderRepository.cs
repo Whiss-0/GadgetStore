@@ -7,7 +7,7 @@ namespace api.OrderModule
     {
         public OrderRepository(MyCon dbConnection) : base(dbConnection) { }
 
-        private const string SelectCols = "order_id, user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status";
+        private const string SelectCols = "order_id, user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status, courier_name, tracking_number, estimated_delivery_date";
 
         public async Task<Order?> GetByIdAsync(int id, CancellationToken ct = default)
         {
@@ -15,6 +15,17 @@ namespace api.OrderModule
             var parameters = new[] { CreateParameter("@id", id) };
             var list = await ExecuteReaderToListAsync(sql, MapOrder, parameters, ct: ct);
             return list.Count > 0 ? list[0] : null;
+        }
+
+        public Task<List<OrderDeliveryEvent>> GetDeliveryEventsAsync(int orderId, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT delivery_event_id, status, event_type, note, created_at, actor_role
+                FROM order_delivery_events
+                WHERE order_id = @order_id
+                ORDER BY created_at ASC, delivery_event_id ASC;";
+            return ExecuteReaderToListAsync(sql, MapDeliveryEvent,
+                new[] { CreateParameter("@order_id", orderId) }, ct: ct);
         }
 
         public async Task<List<Order>> GetAllAsync(CancellationToken ct = default)
@@ -64,8 +75,13 @@ namespace api.OrderModule
                 CreateParameter("@payment_method", order.payment_method),
                 CreateParameter("@payment_status", order.payment_status)
             };
-            var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
-            int newId = Convert.ToInt32(newIdScalar);
+            int newId = await WithTransactionAsync(async (conn, tx) =>
+            {
+                var newIdScalar = await ExecuteScalarAsync<long>(conn, tx, sql, parameters, ct: ct);
+                int id = Convert.ToInt32(newIdScalar);
+                await InsertDeliveryEventAsync(conn, tx, id, order.status, "OrderCreated", "Order placed.", "User", order.order_date, ct);
+                return id;
+            }, ct: ct);
             order.order_id = newId;
             return newId;
         }
@@ -73,7 +89,7 @@ namespace api.OrderModule
         public async Task<bool> UpdateAsync(Order order, CancellationToken ct = default)
         {
             if (order is null) throw new ArgumentNullException(nameof(order));
-            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, status = @status, shipping_address = @shipping_address, phone_number = @phone_number, payment_method = @payment_method, payment_status = @payment_status WHERE order_id = @id;";
+            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, status = @status, shipping_address = @shipping_address, phone_number = @phone_number, payment_method = @payment_method, payment_status = @payment_status, courier_name = @courier_name, tracking_number = @tracking_number, estimated_delivery_date = @estimated_delivery_date WHERE order_id = @id;";
             var parameters = new[]
             {
                 CreateParameter("@user_id", order.user_id),
@@ -84,10 +100,57 @@ namespace api.OrderModule
                 CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
                 CreateParameter("@payment_method", order.payment_method),
                 CreateParameter("@payment_status", order.payment_status),
+                CreateParameter("@courier_name", (object?)order.courier_name ?? DBNull.Value),
+                CreateParameter("@tracking_number", (object?)order.tracking_number ?? DBNull.Value),
+                CreateParameter("@estimated_delivery_date", (object?)order.estimated_delivery_date ?? DBNull.Value),
                 CreateParameter("@id", order.order_id)
             };
             int rows = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
             return rows > 0;
+        }
+
+        public Task<bool> UpdateStatusWithEventAsync(int orderId, string expectedStatus, string newStatus, string actorRole, string? note, CancellationToken ct = default)
+        {
+            return WithTransactionAsync(async (conn, tx) =>
+            {
+                const string sql = "UPDATE orders SET status = @status WHERE order_id = @id AND status = @expected_status;";
+                int changed = await ExecuteNonQueryAsync(conn, tx, sql, new[]
+                {
+                    CreateParameter("@status", newStatus),
+                    CreateParameter("@id", orderId),
+                    CreateParameter("@expected_status", expectedStatus),
+                }, ct: ct);
+                if (changed == 0) return false;
+
+                await InsertDeliveryEventAsync(conn, tx, orderId, newStatus,
+                    newStatus == "Cancelled" ? "Cancelled" : "StatusChanged", note, actorRole, DateTime.UtcNow, ct);
+                return true;
+            }, ct: ct);
+        }
+
+        public Task<bool> UpdateFulfillmentWithEventAsync(Order order, string actorRole, string? note, CancellationToken ct = default)
+        {
+            return WithTransactionAsync(async (conn, tx) =>
+            {
+                const string sql = @"
+                    UPDATE orders
+                    SET courier_name = @courier_name,
+                        tracking_number = @tracking_number,
+                        estimated_delivery_date = @estimated_delivery_date
+                    WHERE order_id = @id;";
+                int changed = await ExecuteNonQueryAsync(conn, tx, sql, new[]
+                {
+                    CreateParameter("@courier_name", (object?)order.courier_name ?? DBNull.Value),
+                    CreateParameter("@tracking_number", (object?)order.tracking_number ?? DBNull.Value),
+                    CreateParameter("@estimated_delivery_date", (object?)order.estimated_delivery_date ?? DBNull.Value),
+                    CreateParameter("@id", order.order_id),
+                }, ct: ct);
+                if (changed == 0) return false;
+
+                await InsertDeliveryEventAsync(conn, tx, order.order_id, order.status,
+                    "TrackingUpdated", note, actorRole, DateTime.UtcNow, ct);
+                return true;
+            }, ct: ct);
         }
 
         public async Task<bool> DeleteAsync(int id, CancellationToken ct = default)
@@ -177,6 +240,7 @@ namespace api.OrderModule
                 int newOrderId = Convert.ToInt32(newIdScalar);
                 order.order_id      = newOrderId;
                 order.total_amount  = authoritativeTotal;
+                await InsertDeliveryEventAsync(conn, tx, newOrderId, order.status, "OrderCreated", "Order placed.", "User", order.order_date, ct);
 
                 // 3. Decrement stock and insert detail lines using DB prices.
                 foreach (var (productId, quantity, dbPrice) in pricedDetails)
@@ -232,8 +296,43 @@ namespace api.OrderModule
                 shipping_address = ReadValue<string?>(reader, "shipping_address", null),
                 phone_number     = ReadValue<string?>(reader, "phone_number", null),
                 payment_method   = ReadValue(reader, "payment_method", "COD"),
-                payment_status   = ReadValue(reader, "payment_status", "Unpaid")
+                payment_status   = ReadValue(reader, "payment_status", "Unpaid"),
+                courier_name     = ReadValue<string?>(reader, "courier_name", null),
+                tracking_number  = ReadValue<string?>(reader, "tracking_number", null),
+                estimated_delivery_date = ReadValue<string?>(reader, "estimated_delivery_date", null)
             };
+        }
+
+        private static OrderDeliveryEvent MapDeliveryEvent(DbDataReader reader)
+        {
+            string createdAt = ReadValue(reader, "created_at", DateTime.UtcNow.ToString("o"));
+            return new OrderDeliveryEvent
+            {
+                delivery_event_id = ReadValue(reader, "delivery_event_id", 0L),
+                status = ReadValue(reader, "status", "Pending"),
+                event_type = ReadValue(reader, "event_type", string.Empty),
+                note = ReadValue<string?>(reader, "note", null),
+                created_at = DateTime.TryParse(createdAt, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) ? parsed : DateTime.UtcNow,
+                actor_role = ReadValue(reader, "actor_role", "System"),
+            };
+        }
+
+        private static async Task InsertDeliveryEventAsync(DbConnection conn, DbTransaction tx, int orderId,
+            string status, string eventType, string? note, string actorRole, DateTime createdAt, CancellationToken ct)
+        {
+            const string sql = @"
+                INSERT INTO order_delivery_events (order_id, status, event_type, note, created_at, actor_role)
+                VALUES (@order_id, @status, @event_type, @note, @created_at, @actor_role);";
+            await ExecuteNonQueryAsync(conn, tx, sql, new[]
+            {
+                CreateParameter("@order_id", orderId),
+                CreateParameter("@status", status),
+                CreateParameter("@event_type", eventType),
+                CreateParameter("@note", (object?)note ?? DBNull.Value),
+                CreateParameter("@created_at", createdAt.ToUniversalTime().ToString("o")),
+                CreateParameter("@actor_role", actorRole),
+            }, ct: ct);
         }
     }
 }

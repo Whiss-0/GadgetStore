@@ -43,4 +43,33 @@ public sealed class NotificationService : INotificationService
             _logger.LogWarning(ex, "Notification write failed for order {OrderId} status {Status}", order.order_id, order.status);
         }
     }
+
+    public async Task CreateTrackingUpdateNotificationAsync(Order order, CancellationToken ct = default)
+    {
+        string details = string.Join(" ", new[]
+        {
+            string.IsNullOrWhiteSpace(order.courier_name) ? null : $"Courier: {order.courier_name}.",
+            string.IsNullOrWhiteSpace(order.tracking_number) ? null : $"Tracking number: {order.tracking_number}.",
+            string.IsNullOrWhiteSpace(order.estimated_delivery_date) ? null : $"Estimated delivery: {order.estimated_delivery_date}."
+        }.Where(value => value != null));
+        string message = $"Tracking details for order #{order.order_id} have been updated." +
+            (details.Length == 0 ? string.Empty : " " + details);
+
+        try
+        {
+            await _repository.CreateForUserAsync(new Notification
+            {
+                recipient_user_id = order.user_id,
+                notification_type = "SystemNotice",
+                title = "Tracking details updated",
+                message = message,
+                related_order_id = order.order_id,
+                created_at = DateTime.UtcNow,
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Tracking notification write failed for order {OrderId}", order.order_id);
+        }
+    }
 }

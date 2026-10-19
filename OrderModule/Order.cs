@@ -11,5 +11,8 @@ namespace api.OrderModule
         public string? phone_number { get; set; }
         public string payment_method { get; set; } = "COD";
         public string payment_status { get; set; } = "Unpaid";
+        public string? courier_name { get; set; }
+        public string? tracking_number { get; set; }
+        public string? estimated_delivery_date { get; set; }
     }
 }
