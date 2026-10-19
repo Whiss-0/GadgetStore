@@ -13,5 +13,8 @@ namespace api.ProductsModule
         public int? ram_gb { get; set; }
         public string? processor { get; set; }
         public int? storage_gb { get; set; }
+        public string? warranty_provider { get; set; }
+        public int? warranty_period_months { get; set; }
+        public string? warranty_terms { get; set; }
     }
 }

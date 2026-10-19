@@ -7,7 +7,7 @@ namespace api.ProductsModule
     {
         public ProductRepository(MyCon dbConnection) : base(dbConnection) { }
 
-        private const string SelectCols = "product_id, category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb";
+        private const string SelectCols = "product_id, category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb, warranty_provider, warranty_period_months, warranty_terms";
 
         public async Task<Product?> GetByIdAsync(int id, CancellationToken ct = default)
         {
@@ -57,8 +57,8 @@ namespace api.ProductsModule
         {
             if (product is null) throw new ArgumentNullException(nameof(product));
             const string sql = @"
-                INSERT INTO products (category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb)
-                VALUES (@category_id, @product_name, @brand, @price, @description, @image, @stock, @ram_gb, @processor, @storage_gb);
+                INSERT INTO products (category_id, product_name, brand, price, description, image, stock, ram_gb, processor, storage_gb, warranty_provider, warranty_period_months, warranty_terms)
+                VALUES (@category_id, @product_name, @brand, @price, @description, @image, @stock, @ram_gb, @processor, @storage_gb, @warranty_provider, @warranty_period_months, @warranty_terms);
                 SELECT last_insert_rowid();";
             var parameters = new[]
             {
@@ -71,7 +71,10 @@ namespace api.ProductsModule
                 CreateParameter("@stock", product.stock),
                 CreateParameter("@ram_gb", (object?)product.ram_gb ?? DBNull.Value),
                 CreateParameter("@processor", (object?)product.processor ?? DBNull.Value),
-                CreateParameter("@storage_gb", (object?)product.storage_gb ?? DBNull.Value)
+                CreateParameter("@storage_gb", (object?)product.storage_gb ?? DBNull.Value),
+                CreateParameter("@warranty_provider", (object?)product.warranty_provider ?? DBNull.Value),
+                CreateParameter("@warranty_period_months", (object?)product.warranty_period_months ?? DBNull.Value),
+                CreateParameter("@warranty_terms", (object?)product.warranty_terms ?? DBNull.Value)
             };
             var newIdScalar = await ExecuteScalarAsync<long>(sql, parameters, ct: ct);
             int newId = Convert.ToInt32(newIdScalar);
@@ -85,7 +88,9 @@ namespace api.ProductsModule
             const string sql = @"
                 UPDATE products SET category_id = @category_id, product_name = @product_name, brand = @brand,
                     price = @price, description = @description, image = @image, stock = @stock,
-                    ram_gb = @ram_gb, processor = @processor, storage_gb = @storage_gb
+                    ram_gb = @ram_gb, processor = @processor, storage_gb = @storage_gb,
+                    warranty_provider = @warranty_provider, warranty_period_months = @warranty_period_months,
+                    warranty_terms = @warranty_terms
                 WHERE product_id = @id;";
             var parameters = new[]
             {
@@ -99,6 +104,9 @@ namespace api.ProductsModule
                 CreateParameter("@ram_gb", (object?)product.ram_gb ?? DBNull.Value),
                 CreateParameter("@processor", (object?)product.processor ?? DBNull.Value),
                 CreateParameter("@storage_gb", (object?)product.storage_gb ?? DBNull.Value),
+                CreateParameter("@warranty_provider", (object?)product.warranty_provider ?? DBNull.Value),
+                CreateParameter("@warranty_period_months", (object?)product.warranty_period_months ?? DBNull.Value),
+                CreateParameter("@warranty_terms", (object?)product.warranty_terms ?? DBNull.Value),
                 CreateParameter("@id", product.product_id)
             };
             int rows = await ExecuteNonQueryAsync(sql, parameters, ct: ct);
@@ -134,6 +142,9 @@ namespace api.ProductsModule
             int ramOrdinal = reader.GetOrdinal("ram_gb");
             int procOrdinal = reader.GetOrdinal("processor");
             int storageOrdinal = reader.GetOrdinal("storage_gb");
+            int warrantyProviderOrdinal = reader.GetOrdinal("warranty_provider");
+            int warrantyPeriodOrdinal = reader.GetOrdinal("warranty_period_months");
+            int warrantyTermsOrdinal = reader.GetOrdinal("warranty_terms");
             return new Product
             {
                 product_id = ReadValue(reader, "product_id", 0),
@@ -146,7 +157,10 @@ namespace api.ProductsModule
                 stock = ReadValue(reader, "stock", 0),
                 ram_gb = reader.IsDBNull(ramOrdinal) ? null : Convert.ToInt32(reader.GetValue(ramOrdinal)),
                 processor = reader.IsDBNull(procOrdinal) ? null : reader.GetString(procOrdinal),
-                storage_gb = reader.IsDBNull(storageOrdinal) ? null : Convert.ToInt32(reader.GetValue(storageOrdinal))
+                storage_gb = reader.IsDBNull(storageOrdinal) ? null : Convert.ToInt32(reader.GetValue(storageOrdinal)),
+                warranty_provider = reader.IsDBNull(warrantyProviderOrdinal) ? null : reader.GetString(warrantyProviderOrdinal),
+                warranty_period_months = reader.IsDBNull(warrantyPeriodOrdinal) ? null : Convert.ToInt32(reader.GetValue(warrantyPeriodOrdinal)),
+                warranty_terms = reader.IsDBNull(warrantyTermsOrdinal) ? null : reader.GetString(warrantyTermsOrdinal)
             };
         }
     }

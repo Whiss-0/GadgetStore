@@ -7,7 +7,7 @@ namespace api.OrderModule
     {
         public OrderRepository(MyCon dbConnection) : base(dbConnection) { }
 
-        private const string SelectCols = "order_id, user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status, courier_name, tracking_number, estimated_delivery_date";
+        private const string SelectCols = "order_id, user_id, order_date, total_amount, subtotal_amount, delivery_fee_amount, vat_amount, vat_rate_percent, vat_price_mode, status, shipping_address, shipping_city_code, shipping_province_code, phone_number, payment_method, payment_status, courier_name, tracking_number, estimated_delivery_date";
 
         public async Task<Order?> GetByIdAsync(int id, CancellationToken ct = default)
         {
@@ -61,8 +61,8 @@ namespace api.OrderModule
         {
             if (order is null) throw new ArgumentNullException(nameof(order));
             const string sql = @"
-                INSERT INTO orders (user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status)
-                VALUES (@user_id, @order_date, @total_amount, @status, @shipping_address, @phone_number, @payment_method, @payment_status);
+                INSERT INTO orders (user_id, order_date, total_amount, subtotal_amount, delivery_fee_amount, vat_amount, vat_rate_percent, vat_price_mode, status, shipping_address, shipping_city_code, shipping_province_code, phone_number, payment_method, payment_status)
+                VALUES (@user_id, @order_date, @total_amount, @subtotal_amount, @delivery_fee_amount, @vat_amount, @vat_rate_percent, @vat_price_mode, @status, @shipping_address, @shipping_city_code, @shipping_province_code, @phone_number, @payment_method, @payment_status);
                 SELECT last_insert_rowid();";
             var parameters = new[]
             {
@@ -71,9 +71,16 @@ namespace api.OrderModule
                 CreateParameter("@total_amount", order.total_amount),
                 CreateParameter("@status", order.status),
                 CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                CreateParameter("@shipping_city_code", (object?)order.shipping_city_code ?? DBNull.Value),
+                CreateParameter("@shipping_province_code", (object?)order.shipping_province_code ?? DBNull.Value),
                 CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
                 CreateParameter("@payment_method", order.payment_method),
-                CreateParameter("@payment_status", order.payment_status)
+                CreateParameter("@payment_status", order.payment_status),
+                CreateParameter("@subtotal_amount", order.subtotal_amount),
+                CreateParameter("@delivery_fee_amount", order.delivery_fee_amount),
+                CreateParameter("@vat_amount", order.vat_amount),
+                CreateParameter("@vat_rate_percent", order.vat_rate_percent),
+                CreateParameter("@vat_price_mode", order.vat_price_mode)
             };
             int newId = await WithTransactionAsync(async (conn, tx) =>
             {
@@ -89,7 +96,7 @@ namespace api.OrderModule
         public async Task<bool> UpdateAsync(Order order, CancellationToken ct = default)
         {
             if (order is null) throw new ArgumentNullException(nameof(order));
-            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, status = @status, shipping_address = @shipping_address, phone_number = @phone_number, payment_method = @payment_method, payment_status = @payment_status, courier_name = @courier_name, tracking_number = @tracking_number, estimated_delivery_date = @estimated_delivery_date WHERE order_id = @id;";
+            const string sql = "UPDATE orders SET user_id = @user_id, order_date = @order_date, total_amount = @total_amount, subtotal_amount = @subtotal_amount, delivery_fee_amount = @delivery_fee_amount, vat_amount = @vat_amount, vat_rate_percent = @vat_rate_percent, vat_price_mode = @vat_price_mode, status = @status, shipping_address = @shipping_address, shipping_city_code = @shipping_city_code, shipping_province_code = @shipping_province_code, phone_number = @phone_number, payment_method = @payment_method, payment_status = @payment_status, courier_name = @courier_name, tracking_number = @tracking_number, estimated_delivery_date = @estimated_delivery_date WHERE order_id = @id;";
             var parameters = new[]
             {
                 CreateParameter("@user_id", order.user_id),
@@ -97,9 +104,16 @@ namespace api.OrderModule
                 CreateParameter("@total_amount", order.total_amount),
                 CreateParameter("@status", order.status),
                 CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                CreateParameter("@shipping_city_code", (object?)order.shipping_city_code ?? DBNull.Value),
+                CreateParameter("@shipping_province_code", (object?)order.shipping_province_code ?? DBNull.Value),
                 CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
                 CreateParameter("@payment_method", order.payment_method),
                 CreateParameter("@payment_status", order.payment_status),
+                CreateParameter("@subtotal_amount", order.subtotal_amount),
+                CreateParameter("@delivery_fee_amount", order.delivery_fee_amount),
+                CreateParameter("@vat_amount", order.vat_amount),
+                CreateParameter("@vat_rate_percent", order.vat_rate_percent),
+                CreateParameter("@vat_price_mode", order.vat_price_mode),
                 CreateParameter("@courier_name", (object?)order.courier_name ?? DBNull.Value),
                 CreateParameter("@tracking_number", (object?)order.tracking_number ?? DBNull.Value),
                 CreateParameter("@estimated_delivery_date", (object?)order.estimated_delivery_date ?? DBNull.Value),
@@ -184,8 +198,72 @@ namespace api.OrderModule
 
             return await WithTransactionAsync(async (conn, tx) =>
             {
-                // 1. Validate every item, read DB prices, calculate authoritative total.
-                decimal authoritativeTotal = 0m;
+                // Load settings inside the order transaction so the calculation and its
+                // order-time snapshot use one consistent settings row.
+                const string settingsSql = @"
+                    SELECT delivery_fee_amount, vat_enabled, vat_rate_percent, vat_price_mode, vat_delivery_taxable
+                    FROM store_pricing_settings
+                    WHERE id = 1
+                    LIMIT 1;";
+                var settingsRows = await ExecuteReaderToListAsync(conn, tx, settingsSql, reader => (
+                    deliveryFee: ReadValue(reader, "delivery_fee_amount", 0m),
+                    vatEnabled: ReadValue(reader, "vat_enabled", 0) != 0,
+                    vatRatePercent: ReadValue(reader, "vat_rate_percent", 12m),
+                    vatPriceMode: ReadValue(reader, "vat_price_mode", "unconfirmed"),
+                    vatDeliveryTaxable: ReadValue(reader, "vat_delivery_taxable", 0) != 0
+                ), ct: ct);
+                if (settingsRows.Count == 0)
+                    throw new InvalidOperationException("Store pricing settings are not initialized. Apply the one-time database migration.");
+
+                var pricing = settingsRows[0];
+                if (pricing.deliveryFee < 0 || pricing.vatRatePercent < 0 || pricing.vatRatePercent > 100)
+                    throw new InvalidOperationException("Store pricing settings contain an invalid fee or VAT rate.");
+                if (pricing.vatEnabled && pricing.vatPriceMode != "inclusive" && pricing.vatPriceMode != "exclusive")
+                    throw new InvalidOperationException("VAT cannot be enabled until the price convention is confirmed as inclusive or exclusive.");
+
+                // Validate the requested area and resolve its fee inside this same transaction.
+                // Codes are TEXT/PSGC values; they are never converted to numbers.
+                const string areaSql = @"
+                    SELECT p.province_code, c.city_code
+                    FROM ph_provinces p
+                    JOIN ph_cities c ON c.province_code = p.province_code
+                    WHERE p.province_code = @province_code AND c.city_code = @city_code
+                    LIMIT 1;";
+                var areaRows = await ExecuteReaderToListAsync(conn, tx, areaSql,
+                    reader => (province: ReadValue(reader, "province_code", string.Empty),
+                               city: ReadValue(reader, "city_code", string.Empty)),
+                    new[]
+                    {
+                        CreateParameter("@province_code", order.shipping_province_code ?? string.Empty),
+                        CreateParameter("@city_code", order.shipping_city_code ?? string.Empty),
+                    }, ct: ct);
+                if (areaRows.Count == 0)
+                    throw new InvalidOperationException("The supplied provinceCode and cityCode are invalid or the city/municipality does not belong to that province.");
+
+                const string feeSql = @"
+                    SELECT CASE
+                        WHEN EXISTS (SELECT 1 FROM delivery_fee_rules WHERE province_code = @province_code AND city_code = @city_code)
+                        THEN (SELECT delivery_fee_amount FROM delivery_fee_rules WHERE province_code = @province_code AND city_code = @city_code LIMIT 1)
+                        WHEN EXISTS (SELECT 1 FROM delivery_fee_rules WHERE province_code = @province_code AND city_code IS NULL)
+                        THEN (SELECT delivery_fee_amount FROM delivery_fee_rules WHERE province_code = @province_code AND city_code IS NULL LIMIT 1)
+                        ELSE @fallback_fee
+                    END AS delivery_fee_amount;";
+                var areaFees = await ExecuteReaderToListAsync(conn, tx, feeSql,
+                    reader => ReadValue(reader, "delivery_fee_amount", 0m),
+                    new[]
+                    {
+                        CreateParameter("@province_code", order.shipping_province_code!),
+                        CreateParameter("@city_code", order.shipping_city_code!),
+                        CreateParameter("@fallback_fee", pricing.deliveryFee),
+                    }, ct: ct);
+                if (areaFees.Count == 0)
+                    throw new InvalidOperationException("Unable to resolve a delivery fee for the selected area.");
+                decimal resolvedDeliveryFee = areaFees[0];
+                if (resolvedDeliveryFee < 0)
+                    throw new InvalidOperationException("The resolved delivery fee is invalid.");
+
+                // 1. Validate every item and calculate the authoritative DB-priced subtotal.
+                decimal subtotal = 0m;
                 var pricedDetails = new List<(int productId, int quantity, decimal dbPrice)>();
 
                 foreach (var detail in mergedDetails)
@@ -213,15 +291,30 @@ namespace api.OrderModule
                     if (stock < detail.quantity)
                         throw new InvalidOperationException($"Product {detail.product_id} is out of stock or has insufficient stock.");
 
-                    authoritativeTotal = checked(authoritativeTotal + dbPrice * detail.quantity);
+                    subtotal = checked(subtotal + dbPrice * detail.quantity);
                     pricedDetails.Add((detail.product_id, detail.quantity, dbPrice));
                 }
+
+                subtotal = RoundMoney(subtotal);
+                decimal deliveryFee = RoundMoney(resolvedDeliveryFee);
+                decimal vatAmount = 0m;
+                string orderVatPriceMode = pricing.vatEnabled ? pricing.vatPriceMode : "disabled";
+                decimal taxableBase = subtotal + (pricing.vatDeliveryTaxable ? deliveryFee : 0m);
+                if (pricing.vatEnabled)
+                {
+                    vatAmount = pricing.vatPriceMode == "exclusive"
+                        ? RoundMoney(taxableBase * pricing.vatRatePercent / 100m)
+                        : RoundMoney(taxableBase * pricing.vatRatePercent / (100m + pricing.vatRatePercent));
+                }
+                decimal authoritativeTotal = pricing.vatEnabled && pricing.vatPriceMode == "exclusive"
+                    ? RoundMoney(subtotal + deliveryFee + vatAmount)
+                    : RoundMoney(subtotal + deliveryFee);
 
                 // 2. Insert the order using the authoritative total calculated above.
 
                 const string insertOrder = @"
-                    INSERT INTO orders (user_id, order_date, total_amount, status, shipping_address, phone_number, payment_method, payment_status)
-                    VALUES (@user_id, @order_date, @total_amount, @status, @shipping_address, @phone_number, @payment_method, @payment_status);
+                    INSERT INTO orders (user_id, order_date, total_amount, subtotal_amount, delivery_fee_amount, vat_amount, vat_rate_percent, vat_price_mode, status, shipping_address, shipping_city_code, shipping_province_code, phone_number, payment_method, payment_status)
+                    VALUES (@user_id, @order_date, @total_amount, @subtotal_amount, @delivery_fee_amount, @vat_amount, @vat_rate_percent, @vat_price_mode, @status, @shipping_address, @shipping_city_code, @shipping_province_code, @phone_number, @payment_method, @payment_status);
                     SELECT last_insert_rowid();";
 
                 var orderParams = new[]
@@ -229,8 +322,15 @@ namespace api.OrderModule
                     CreateParameter("@user_id", order.user_id),
                     CreateParameter("@order_date", order.order_date.ToString("yyyy-MM-dd HH:mm:ss")),
                     CreateParameter("@total_amount", authoritativeTotal),   // DB-calculated, not client value
+                    CreateParameter("@subtotal_amount", subtotal),
+                    CreateParameter("@delivery_fee_amount", deliveryFee),
+                    CreateParameter("@vat_amount", vatAmount),
+                    CreateParameter("@vat_rate_percent", pricing.vatRatePercent),
+                    CreateParameter("@vat_price_mode", orderVatPriceMode),
                     CreateParameter("@status", order.status),
                     CreateParameter("@shipping_address", (object?)order.shipping_address ?? DBNull.Value),
+                    CreateParameter("@shipping_city_code", (object?)order.shipping_city_code ?? DBNull.Value),
+                    CreateParameter("@shipping_province_code", (object?)order.shipping_province_code ?? DBNull.Value),
                     CreateParameter("@phone_number", (object?)order.phone_number ?? DBNull.Value),
                     CreateParameter("@payment_method", order.payment_method),
                     CreateParameter("@payment_status", order.payment_status),
@@ -240,6 +340,11 @@ namespace api.OrderModule
                 int newOrderId = Convert.ToInt32(newIdScalar);
                 order.order_id      = newOrderId;
                 order.total_amount  = authoritativeTotal;
+                order.subtotal_amount = subtotal;
+                order.delivery_fee_amount = deliveryFee;
+                order.vat_amount = vatAmount;
+                order.vat_rate_percent = pricing.vatRatePercent;
+                order.vat_price_mode = orderVatPriceMode;
                 await InsertDeliveryEventAsync(conn, tx, newOrderId, order.status, "OrderCreated", "Order placed.", "User", order.order_date, ct);
 
                 // 3. Decrement stock and insert detail lines using DB prices.
@@ -292,8 +397,15 @@ namespace api.OrderModule
                 user_id          = ReadValue(reader, "user_id", 0),
                 order_date       = orderDate,
                 total_amount     = totalAmount,
+                subtotal_amount = ReadValue(reader, "subtotal_amount", 0m),
+                delivery_fee_amount = ReadValue(reader, "delivery_fee_amount", 0m),
+                vat_amount = ReadValue(reader, "vat_amount", 0m),
+                vat_rate_percent = ReadValue(reader, "vat_rate_percent", 0m),
+                vat_price_mode = ReadValue(reader, "vat_price_mode", "disabled"),
                 status           = ReadValue(reader, "status", "Pending"),
                 shipping_address = ReadValue<string?>(reader, "shipping_address", null),
+                shipping_city_code = ReadValue<string?>(reader, "shipping_city_code", null),
+                shipping_province_code = ReadValue<string?>(reader, "shipping_province_code", null),
                 phone_number     = ReadValue<string?>(reader, "phone_number", null),
                 payment_method   = ReadValue(reader, "payment_method", "COD"),
                 payment_status   = ReadValue(reader, "payment_status", "Unpaid"),
@@ -334,5 +446,7 @@ namespace api.OrderModule
                 CreateParameter("@actor_role", actorRole),
             }, ct: ct);
         }
+
+        private static decimal RoundMoney(decimal amount) => decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
     }
 }

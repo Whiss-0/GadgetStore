@@ -14,6 +14,7 @@ using api.Services;
 using api.ActivityModule;
 using api.NotificationModule;
 using api.ContactModule;
+using api.StorePricingModule;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Any;
@@ -148,6 +149,7 @@ builder.Services.AddScoped<IActivityRepository, ActivityRepository>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IContactMessageRepository, ContactMessageRepository>();
+builder.Services.AddScoped<IStorePricingSettingsRepository, StorePricingSettingsRepository>();
 
 // Register JWT Token Service
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();

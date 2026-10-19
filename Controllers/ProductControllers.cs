@@ -74,7 +74,10 @@ namespace api.Controllers
                 image = dto.Image,
                 ram_gb = dto.RamGb,
                 processor = dto.Processor,
-                storage_gb = dto.StorageGb
+                storage_gb = dto.StorageGb,
+                warranty_provider = NormalizeOptional(dto.WarrantyProvider),
+                warranty_period_months = dto.WarrantyPeriodMonths,
+                warranty_terms = NormalizeOptional(dto.WarrantyTerms)
             };
             int newId = await _productRepository.CreateAsync(product, ct);
 
@@ -110,6 +113,9 @@ namespace api.Controllers
             existing.ram_gb = dto.RamGb;
             existing.processor = dto.Processor;
             existing.storage_gb = dto.StorageGb;
+            existing.warranty_provider = NormalizeOptional(dto.WarrantyProvider);
+            existing.warranty_period_months = dto.WarrantyPeriodMonths;
+            existing.warranty_terms = NormalizeOptional(dto.WarrantyTerms);
             bool updated = await _productRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update product." });
 
@@ -247,6 +253,8 @@ namespace api.Controllers
             User.HasClaim("user_role_id", "1") ? "Admin" :
             User.HasClaim("user_role_id", "2") ? "Staff" : "User";
 
+        private static string? NormalizeOptional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
         private async Task TryLogAsync(ActivityLog log)
         {
             try { await _activityRepository.CreateAsync(log); }
@@ -268,6 +276,12 @@ namespace api.Controllers
         public int? RamGb { get; set; }
         public string? Processor { get; set; }
         public int? StorageGb { get; set; }
+        [System.ComponentModel.DataAnnotations.StringLength(120)]
+        public string? WarrantyProvider { get; set; }
+        [System.ComponentModel.DataAnnotations.Range(1, int.MaxValue)]
+        public int? WarrantyPeriodMonths { get; set; }
+        [System.ComponentModel.DataAnnotations.StringLength(2000)]
+        public string? WarrantyTerms { get; set; }
     }
 
     public class DescriptionUpdateRequest

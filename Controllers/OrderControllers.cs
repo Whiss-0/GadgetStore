@@ -121,54 +121,12 @@ namespace api.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<Order>> Create([FromBody] OrderRequest dto, CancellationToken ct)
+        public ActionResult<Order> Create([FromBody] OrderRequest dto)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
-            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            int.TryParse(userIdClaim, out int userId);
-
-            // Card/GCash are simulated: mark payment_status as paid immediately since
-            // there's no real gateway behind this. COD stays Unpaid until it's paid
-            // on delivery. `status` (shipping progress) always starts at 'Pending' —
-            // never write "Paid (Simulated)" into status, it violates that column's
-            // CHECK constraint.
-            string paymentStatus = dto.PaymentMethod == "COD" ? "Unpaid" : "Paid (Simulated)";
-
-            Console.WriteLine($"[ORDER CREATE] Received TotalAmount: '{dto.TotalAmount}', PaymentMethod: '{dto.PaymentMethod}'");
-
-            var order = new Order
-            {
-                user_id           = userId,   // never trust a client-supplied user id
-                order_date        = DateTime.UtcNow,
-                status            = "Pending",
-                total_amount      = dto.TotalAmount,
-                shipping_address  = dto.ShippingAddress,
-                phone_number      = dto.PhoneNumber,
-                payment_method    = dto.PaymentMethod,
-                payment_status    = paymentStatus
-            };
-            int newId = await _orderRepository.CreateAsync(order, ct);
-
-            // Record order placed
-            _ = TryLogAsync(new ActivityLog
-            {
-                User_ID           = userId,
-                Actor_User_ID     = userId,
-                Actor_Role        = "User",
-                Activity_Type     = "OrderPlaced",
-                Description       = $"Placed order #{newId}.",
-                Related_Order_ID  = newId,
-                Created_At        = DateTime.UtcNow,
-            });
-
-            // Best-effort confirmation email — doesn't block or fail the order if it errors.
-            var user = await _userRepository.GetByIdAsync(userId, ct);
-            if (user != null && !string.IsNullOrWhiteSpace(user.Email))
-            {
-                _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newId, dto.TotalAmount, dto.PaymentMethod, ct);
-            }
-
-            return CreatedAtAction(nameof(GetById), new { id = newId }, order);
+            // This older endpoint has no order lines and accepts a client total, so it
+            // cannot safely apply current DB prices, delivery settings, or VAT.
+            return StatusCode(StatusCodes.Status410Gone,
+                new { message = "This order endpoint is retired. Submit all items through POST /api/order/checkout." });
         }
 
         [HttpPut("{id:int}/cancel")]
@@ -315,6 +273,8 @@ namespace api.Controllers
                 status           = "Pending",
                 total_amount     = dto.TotalAmount,
                 shipping_address = dto.ShippingAddress,
+                shipping_city_code = dto.CityCode,
+                shipping_province_code = dto.ProvinceCode,
                 phone_number     = dto.PhoneNumber,
                 payment_method   = dto.PaymentMethod,
                 payment_status   = paymentStatus
@@ -357,8 +317,20 @@ namespace api.Controllers
                 _ = _orderEmailSender.SendOrderConfirmationAsync(user.Email, newOrderId, order.total_amount, dto.PaymentMethod, ct);
             }
 
-            // Return the authoritative total calculated from DB prices, not the client-supplied value.
-            return Ok(new { order_id = newOrderId, status = "Pending", total_amount = order.total_amount });
+            // Return the complete authoritative order-time pricing snapshot, not client totals.
+            return Ok(new
+            {
+                order_id = newOrderId,
+                status = "Pending",
+                subtotal_amount = order.subtotal_amount,
+                delivery_fee_amount = order.delivery_fee_amount,
+                vat_amount = order.vat_amount,
+                vat_rate_percent = order.vat_rate_percent,
+                vat_price_mode = order.vat_price_mode,
+                shipping_city_code = order.shipping_city_code,
+                shipping_province_code = order.shipping_province_code,
+                total_amount = order.total_amount
+            });
         }
 
         private async Task TryLogAsync(ActivityLog log)
@@ -430,6 +402,16 @@ namespace api.Controllers
 
         [System.ComponentModel.DataAnnotations.Required]
         public List<CheckoutItemRequest>? Items { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "provinceCode is required.")]
+        [System.ComponentModel.DataAnnotations.StringLength(4, MinimumLength = 4)]
+        [System.Text.Json.Serialization.JsonPropertyName("provinceCode")]
+        public string ProvinceCode { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "cityCode is required.")]
+        [System.ComponentModel.DataAnnotations.StringLength(6, MinimumLength = 6)]
+        [System.Text.Json.Serialization.JsonPropertyName("cityCode")]
+        public string CityCode { get; set; } = string.Empty;
     }
 
     public class CheckoutItemRequest
