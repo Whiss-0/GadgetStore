@@ -14,6 +14,31 @@ public sealed class NotificationService : INotificationService
         _logger = logger;
     }
 
+    public async Task CreateNewCustomerOrderNotificationAsync(int orderId, CancellationToken ct = default)
+    {
+        try
+        {
+            var recipients = (await _repository.GetUserIdsByRoleAsync(1, ct))
+                .Concat(await _repository.GetUserIdsByRoleAsync(2, ct))
+                .Distinct()
+                .ToList();
+            if (recipients.Count == 0) return;
+
+            int sent = await _repository.CreateForUsersAsync(recipients, new NotificationDraft
+            {
+                Notification_Type = "NewCustomerOrder",
+                Title = "New customer order",
+                Message = $"Customer order #{orderId} was placed. Open the order queue to review it.",
+                Related_Order_ID = orderId,
+            }, ct);
+            _logger.LogInformation("Created new-order notifications for {RecipientCount} staff/admin recipients (order {OrderId})", sent, orderId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "New-order notification broadcast failed for order {OrderId}", orderId);
+        }
+    }
+
     public async Task CreateOrderStatusNotificationAsync(Order order, string previousStatus, CancellationToken ct = default)
     {
         if (string.Equals(previousStatus, order.status, StringComparison.Ordinal)) return;

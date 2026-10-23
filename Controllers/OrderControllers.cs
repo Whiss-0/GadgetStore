@@ -319,6 +319,10 @@ namespace api.Controllers
                 return BadRequest(new { message = ex.Message });
             }
 
+            // The order is committed; notify every admin and staff account.
+            // NotificationService handles failures without invalidating the order.
+            await _notificationService.CreateNewCustomerOrderNotificationAsync(newOrderId, CancellationToken.None);
+
             // Record order placed activity (best-effort, non-blocking)
             _ = TryLogAsync(new ActivityLog
             {
