@@ -74,11 +74,13 @@ public sealed class ActivityRepository : BaseRepository, IActivityRepository
         int cap = Math.Min(limit ?? MaxSafeLimit, MaxSafeLimit);
 
         const string sql = """
-            SELECT activity_id, user_id, actor_user_id, actor_role, activity_type,
-                   description, related_order_id, related_product_id, created_at
-            FROM activity_logs
-            WHERE user_id = @user_id
-            ORDER BY created_at DESC
+            SELECT a.activity_id, a.user_id, a.actor_user_id, actor.name AS actor_name,
+                   a.actor_role, a.activity_type, a.description, a.related_order_id,
+                   a.related_product_id, a.created_at
+            FROM activity_logs AS a
+            LEFT JOIN users AS actor ON actor.user_ID = a.actor_user_id
+            WHERE a.user_id = @user_id
+            ORDER BY a.created_at DESC
             LIMIT @limit;
             """;
 
@@ -99,14 +101,16 @@ public sealed class ActivityRepository : BaseRepository, IActivityRepository
         int? userId,
         string? actorRole = null,
         int? limit = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? actorUserId = null)
     {
         int cap = Math.Min(limit ?? MaxSafeLimit, MaxSafeLimit);
 
         var sb = new StringBuilder("""
-            SELECT activity_id, user_id, actor_user_id, actor_role, activity_type,
-                   description, related_order_id, related_product_id, created_at
-            FROM activity_logs
+            SELECT a.activity_id, a.user_id, a.actor_user_id, actor.name AS actor_name,
+                   a.actor_role, a.activity_type, a.description, a.related_order_id, a.related_product_id, a.created_at
+            FROM activity_logs AS a
+            LEFT JOIN users AS actor ON actor.user_ID = a.actor_user_id
             WHERE 1=1
             """);
 
@@ -114,31 +118,36 @@ public sealed class ActivityRepository : BaseRepository, IActivityRepository
 
         if (from.HasValue)
         {
-            sb.Append(" AND created_at >= @from");
+            sb.Append(" AND a.created_at >= @from");
             parameters.Add(CreateParameter("@from", from.Value.ToString("o")));
         }
         if (to.HasValue)
         {
-            sb.Append(" AND created_at <= @to");
+            sb.Append(" AND a.created_at <= @to");
             parameters.Add(CreateParameter("@to", to.Value.ToString("o")));
         }
         if (!string.IsNullOrWhiteSpace(type))
         {
-            sb.Append(" AND activity_type = @type");
+            sb.Append(" AND a.activity_type = @type");
             parameters.Add(CreateParameter("@type", type));
         }
         if (userId.HasValue)
         {
-            sb.Append(" AND user_id = @uid");
+            sb.Append(" AND a.user_id = @uid");
             parameters.Add(CreateParameter("@uid", userId.Value));
         }
         if (!string.IsNullOrWhiteSpace(actorRole))
         {
-            sb.Append(" AND actor_role = @actor_role");
+            sb.Append(" AND a.actor_role = @actor_role");
             parameters.Add(CreateParameter("@actor_role", actorRole));
         }
+        if (actorUserId.HasValue)
+        {
+            sb.Append(" AND a.actor_user_id = @actor_user_id");
+            parameters.Add(CreateParameter("@actor_user_id", actorUserId.Value));
+        }
 
-        sb.Append(" ORDER BY created_at DESC LIMIT @limit;");
+        sb.Append(" ORDER BY a.created_at DESC LIMIT @limit;");
         parameters.Add(CreateParameter("@limit", cap));
 
         var rows = await ExecuteReaderToListAsync(sb.ToString(), MapRow, parameters, ct: ct).ConfigureAwait(false);
@@ -150,6 +159,7 @@ public sealed class ActivityRepository : BaseRepository, IActivityRepository
         Activity_ID        = ReadValue(r, "activity_id",        0L),
         User_ID            = r.IsDBNull(r.GetOrdinal("user_id"))            ? null : ReadValue(r, "user_id",            0),
         Actor_User_ID      = r.IsDBNull(r.GetOrdinal("actor_user_id"))      ? null : ReadValue(r, "actor_user_id",      0),
+        Actor_Name         = r.IsDBNull(r.GetOrdinal("actor_name"))          ? null : ReadValue(r, "actor_name",         string.Empty),
         Actor_Role         = ReadValue(r, "actor_role",         "System"),
         Activity_Type      = ReadValue(r, "activity_type",      string.Empty),
         Description        = ReadValue(r, "description",        string.Empty),

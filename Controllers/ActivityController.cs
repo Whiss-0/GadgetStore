@@ -66,10 +66,12 @@ namespace api.Controllers
             [FromQuery] string? type,
             [FromQuery] int? userId,
             [FromQuery] string? actorRole,
+            [FromQuery] int? actorUserId,
             [FromQuery] int? limit,
             CancellationToken ct)
         {
-            var logs = await _activityRepository.GetAllAsync(from, to, type, userId, actorRole, limit, ct);
+            var logs = await _activityRepository.GetAllAsync(
+                from, to, type, userId, actorRole, limit, ct, actorUserId);
             return Ok(logs);
         }
     }

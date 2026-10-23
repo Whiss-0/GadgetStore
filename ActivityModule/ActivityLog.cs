@@ -13,6 +13,9 @@ public sealed class ActivityLog
     [JsonPropertyName("Actor_User_ID")]
     public int? Actor_User_ID { get; set; }
 
+    [JsonPropertyName("Actor_Name")]
+    public string? Actor_Name { get; set; }
+
     [JsonPropertyName("Actor_Role")]
     public string Actor_Role { get; set; } = "System";
 

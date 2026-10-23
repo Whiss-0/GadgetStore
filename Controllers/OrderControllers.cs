@@ -117,6 +117,16 @@ namespace api.Controllers
             if (!updated) return StatusCode(500, new { message = "Failed to update fulfillment details." });
             if (detailsChanged) await _notificationService.CreateTrackingUpdateNotificationAsync(order, ct);
 
+            await TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID = GetActorId(),
+                Actor_Role = actorRole,
+                Activity_Type = "OrderFulfillmentUpdated",
+                Description = $"Updated delivery fulfillment details for order #{id}.",
+                Related_Order_ID = id,
+                Created_At = DateTime.UtcNow,
+            });
+
             return NoContent();
         }
 
@@ -218,19 +228,20 @@ namespace api.Controllers
 
             _ = _notificationService.CreateOrderStatusNotificationAsync(existing, previousStatus, ct);
 
-            // Record status change — actor may be staff or admin
-            var actorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            int.TryParse(actorIdClaim, out int actorId);
-            _ = TryLogAsync(new ActivityLog
+            // Record successful status changes — actor may be staff or admin.
+            if (targetStatus != previousStatus)
             {
-                User_ID          = existing.user_id,
-                Actor_User_ID    = actorId,
-                Actor_Role       = actorRole,
-                Activity_Type    = "OrderStatusChanged",
-                Description      = $"Changed order #{id} status to {existing.status}.",
-                Related_Order_ID = id,
-                Created_At       = DateTime.UtcNow,
-            });
+                await TryLogAsync(new ActivityLog
+                {
+                    User_ID          = existing.user_id,
+                    Actor_User_ID    = GetActorId(),
+                    Actor_Role       = actorRole,
+                    Activity_Type    = "OrderStatusChanged",
+                    Description      = $"Changed order #{id} status from {previousStatus} to {existing.status}.",
+                    Related_Order_ID = id,
+                    Created_At       = DateTime.UtcNow,
+                });
+            }
 
             return NoContent();
         }
@@ -243,6 +254,16 @@ namespace api.Controllers
             if (existing == null) return NotFound(new { message = $"Order with ID {id} not found." });
             bool deleted = await _orderRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete order." });
+
+            await TryLogAsync(new ActivityLog
+            {
+                Actor_User_ID = GetActorId(),
+                Actor_Role = GetActorRole(),
+                Activity_Type = "OrderDeleted",
+                Description = $"Deleted order #{id}.",
+                Related_Order_ID = id,
+                Created_At = DateTime.UtcNow,
+            });
             return NoContent();
         }
 
@@ -340,6 +361,11 @@ namespace api.Controllers
         }
 
         private string GetActorRole() => User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
+        private int? GetActorId()
+        {
+            var actorIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(actorIdClaim, out int actorId) ? actorId : null;
+        }
         private static string? NormalizeOptional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 

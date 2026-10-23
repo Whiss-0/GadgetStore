@@ -18,5 +18,6 @@ public interface IActivityRepository
         int? userId,
         string? actorRole = null,
         int? limit = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int? actorUserId = null);
 }

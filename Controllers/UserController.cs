@@ -98,6 +98,7 @@ namespace api.Controllers
             var existingUser = await _userRepository.GetByIdAsync(id, ct);
             if (existingUser == null) return NotFound(new { message = $"User with ID {id} was not found." });
 
+            int? previousRoleId = existingUser.Role_ID;
             existingUser.Name              = dto.Name              ?? existingUser.Name;
             existingUser.Email             = dto.Email             ?? existingUser.Email;
             existingUser.Address           = dto.Address           ?? existingUser.Address;
@@ -117,7 +118,7 @@ namespace api.Controllers
             int.TryParse(actorClaim, out int actorId);
             string actorRole = User.HasClaim("user_role_id", "1") ? "Admin" : "Staff";
 
-            bool roleChanged = dto.Role_ID.HasValue && dto.Role_ID.Value != existingUser.Role_ID;
+            bool roleChanged = dto.Role_ID.HasValue && dto.Role_ID.Value != previousRoleId;
             if (roleChanged)
             {
                 // Strict logging for role changes — surface failure
@@ -133,7 +134,7 @@ namespace api.Controllers
             }
             else
             {
-                _ = TryLogAsync(new ActivityLog
+                await TryLogAsync(new ActivityLog
                 {
                     User_ID       = id,
                     Actor_User_ID = actorId,

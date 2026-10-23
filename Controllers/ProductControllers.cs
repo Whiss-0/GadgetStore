@@ -166,7 +166,7 @@ namespace api.Controllers
             bool updated = await _productRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update description." });
 
-            _ = TryLogAsync(new ActivityLog
+            await TryLogAsync(new ActivityLog
             {
                 Actor_User_ID      = ActorId(),
                 Actor_Role         = ActorRole(),

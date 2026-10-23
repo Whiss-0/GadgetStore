@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using api.ReviewModule;
+using api.ActivityModule;
 using Ganss.Xss;
 using System;
 using System.Collections.Generic;
@@ -14,10 +15,17 @@ namespace api.Controllers
     public class ReviewController : ControllerBase
     {
         private readonly IReviewRepository _reviewRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<ReviewController> _logger;
 
-        public ReviewController(IReviewRepository reviewRepository)
+        public ReviewController(
+            IReviewRepository reviewRepository,
+            IActivityRepository activityRepository,
+            ILogger<ReviewController> logger)
         {
             _reviewRepository = reviewRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         [AllowAnonymous]
@@ -104,7 +112,36 @@ namespace api.Controllers
             if (existing == null) return NotFound(new { message = $"Review with ID {id} not found." });
             bool deleted = await _reviewRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete review." });
+            string? actorRole = GetAuditedActorRole();
+            if (actorRole != null)
+            {
+                await TryLogAuditAsync(new ActivityLog
+                {
+                    User_ID = existing.user_id,
+                    Actor_User_ID = GetActorId(),
+                    Actor_Role = actorRole,
+                    Activity_Type = "ReviewDeleted",
+                    Description = $"Deleted review #{id} for product #{existing.product_id}.",
+                    Related_Product_ID = existing.product_id,
+                    Created_At = DateTime.UtcNow,
+                });
+            }
             return NoContent();
+        }
+
+        private int? GetActorId()
+        {
+            var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(claim, out int id) ? id : null;
+        }
+
+        private string? GetAuditedActorRole() => User.HasClaim("user_role_id", "1") ? "Admin" :
+            User.HasClaim("user_role_id", "2") ? "Staff" : null;
+
+        private async Task TryLogAuditAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Audit log write failed ({Type})", log.Activity_Type); }
         }
     }
 

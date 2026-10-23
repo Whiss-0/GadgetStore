@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using api.OrderDetailModule;
 using api.OrderModule;
 using api.ProductsModule;
+using api.ActivityModule;
 
 namespace api.Controllers
 {
@@ -14,15 +15,21 @@ namespace api.Controllers
         private readonly IOrderDetailRepository _orderDetailRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IProductRepository _productRepository;
+        private readonly IActivityRepository _activityRepository;
+        private readonly ILogger<OrderDetailController> _logger;
 
         public OrderDetailController(
             IOrderDetailRepository orderDetailRepository,
             IOrderRepository orderRepository,
-            IProductRepository productRepository)
+            IProductRepository productRepository,
+            IActivityRepository activityRepository,
+            ILogger<OrderDetailController> logger)
         {
             _orderDetailRepository = orderDetailRepository;
             _orderRepository = orderRepository;
             _productRepository = productRepository;
+            _activityRepository = activityRepository;
+            _logger = logger;
         }
 
         [Authorize(Policy = "AdminAccess")]
@@ -102,6 +109,20 @@ namespace api.Controllers
                 price = dto.Price
             };
             int newId = await _orderDetailRepository.CreateAsync(detail, ct);
+            string? actorRole = GetAuditedActorRole();
+            if (actorRole != null)
+            {
+                await TryLogAuditAsync(new ActivityLog
+                {
+                    Actor_User_ID = GetActorId(),
+                    Actor_Role = actorRole,
+                    Activity_Type = "OrderDetailCreated",
+                    Description = $"Added a product line to order #{dto.OrderId} (product #{dto.ProductId}).",
+                    Related_Order_ID = dto.OrderId,
+                    Related_Product_ID = dto.ProductId,
+                    Created_At = DateTime.UtcNow,
+                });
+            }
             return CreatedAtAction(nameof(GetById), new { id = newId }, detail);
         }
 
@@ -111,12 +132,28 @@ namespace api.Controllers
             if (!ModelState.IsValid) return BadRequest(ModelState);
             var existing = await _orderDetailRepository.GetByIdAsync(id, ct);
             if (existing == null) return NotFound(new { message = $"OrderDetail with ID {id} not found." });
+            int existingOrderId = existing.order_id;
+            int existingProductId = existing.product_id;
             existing.order_id = dto.OrderId;
             existing.product_id = dto.ProductId;
             existing.quantity = dto.Quantity;
             existing.price = dto.Price;
             bool updated = await _orderDetailRepository.UpdateAsync(existing, ct);
             if (!updated) return StatusCode(500, new { message = "Failed to update order detail." });
+            string? actorRole = GetAuditedActorRole();
+            if (actorRole != null)
+            {
+                await TryLogAuditAsync(new ActivityLog
+                {
+                    Actor_User_ID = GetActorId(),
+                    Actor_Role = actorRole,
+                    Activity_Type = "OrderDetailUpdated",
+                    Description = $"Updated a product line on order #{existingOrderId}.",
+                    Related_Order_ID = existingOrderId,
+                    Related_Product_ID = existingProductId,
+                    Created_At = DateTime.UtcNow,
+                });
+            }
             return NoContent();
         }
 
@@ -128,7 +165,36 @@ namespace api.Controllers
             if (existing == null) return NotFound(new { message = $"OrderDetail with ID {id} not found." });
             bool deleted = await _orderDetailRepository.DeleteAsync(id, ct);
             if (!deleted) return StatusCode(500, new { message = "Failed to delete order detail." });
+            string? actorRole = GetAuditedActorRole();
+            if (actorRole != null)
+            {
+                await TryLogAuditAsync(new ActivityLog
+                {
+                    Actor_User_ID = GetActorId(),
+                    Actor_Role = actorRole,
+                    Activity_Type = "OrderDetailDeleted",
+                    Description = $"Removed a product line from order #{existing.order_id}.",
+                    Related_Order_ID = existing.order_id,
+                    Related_Product_ID = existing.product_id,
+                    Created_At = DateTime.UtcNow,
+                });
+            }
             return NoContent();
+        }
+
+        private int? GetActorId()
+        {
+            var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(claim, out int id) ? id : null;
+        }
+
+        private string? GetAuditedActorRole() => User.HasClaim("user_role_id", "1") ? "Admin" :
+            User.HasClaim("user_role_id", "2") ? "Staff" : null;
+
+        private async Task TryLogAuditAsync(ActivityLog log)
+        {
+            try { await _activityRepository.CreateAsync(log); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Audit log write failed ({Type})", log.Activity_Type); }
         }
     }
 
